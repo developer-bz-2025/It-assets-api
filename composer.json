@@ -1,0 +1,20 @@
+{
+    "name": "bz-assets/it-assets-system",
+    "description": "IT Assets Management System",
+    "type": "project",
+    "require": {
+        "php": "^8.0",
+        "vlucas/phpdotenv": "^5.4",
+        "slim/slim": "^4.0",
+        "slim/psr7": "^1.0",
+        "illuminate/database": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Api\\": "api/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true
+    }
+}
