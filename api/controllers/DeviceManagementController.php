@@ -33,8 +33,7 @@ class DeviceManagementController {
             'brand_id',
             'status_id',
             'location_id',
-            'pr_id',
-            'emp_id'
+            'pr_id'
         ];
 
         foreach ($requiredFields as $field) {
@@ -155,7 +154,7 @@ class DeviceManagementController {
 
             DB::commit();
             // return $response->withJson(['message' => 'Device added successfully', 'device' => $device], 201);
-            $response->getBody()->write(json_encode($device));
+            $response->getBody()->write(json_encode(['status'=>'success','message' => 'Device added successfully', 'device' => $device]));
             return $response->withHeader('Content-Type', 'application/json');
 
         } catch (\Exception $e) {
@@ -167,6 +166,104 @@ class DeviceManagementController {
         }
 
     }
+
+    /**
+ * Edit a device's attributes.
+ */
+public function editDevice(Request $request, Response $response, array $args) {
+    $data = $request->getParsedBody();
+    $deviceId = $args['id'];
+
+    // Find the device
+    $device = Device::find($deviceId);
+    if (!$device) {
+        $response->getBody()->write(json_encode(['error' => 'Device not found']));
+        return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+    }
+
+    // Validate required fields (if any)
+    if (isset($data['device_sn']) && Device::where('device_sn', $data['device_sn'])->where('device_id', '!=', $deviceId)->exists()) {
+        $response->getBody()->write(json_encode(['error' => 'Device Serial Number already exists']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    // Start a transaction
+    DB::beginTransaction();
+    try {
+        // Update general device attributes
+        $device->update([
+            'device_sn' => $data['device_sn'] ?? $device->device_sn,
+            'device_acquisition_date' => $data['device_acquisition_date'] ?? $device->device_acquisition_date,
+            'device_model' => $data['device_model'] ?? $device->device_model,
+            'device_notes' => $data['device_notes'] ?? $device->device_notes,
+            'brand_id' => $data['brand_id'] ?? $device->brand_id,
+            'status_id' => $data['status_id'] ?? $device->status_id,
+            'location_id' => $data['location_id'] ?? $device->location_id,
+            'pr_id' => $data['pr_id'] ?? $device->pr_id,
+            'emp_id' => $data['emp_id'] ?? $device->emp_id,
+        ]);
+
+        // Update type-specific attributes
+        switch ($data['device_type'] ?? null) {
+            case 'laptop':
+                $laptop = Laptop::where('device_id', $deviceId)->first();
+                if ($laptop) {
+                    $laptop->update([
+                        'laptop_ram' => $data['laptop_ram'] ?? $laptop->laptop_ram,
+                        'laptop_storageType' => $data['laptop_storageType'] ?? $laptop->laptop_storageType,
+                        'laptop_storageSize' => $data['laptop_storageSize'] ?? $laptop->laptop_storageSize,
+                        'laptop_processor' => $data['laptop_processor'] ?? $laptop->laptop_processor,
+                        'laptop_gth' => $data['laptop_gth'] ?? $laptop->laptop_gth,
+                    ]);
+                }
+                break;
+
+            case 'mobile':
+                // No additional attributes to update for mobile
+                break;
+
+            case 'screen':
+                $screen = Screen::where('device_id', $deviceId)->first();
+                if ($screen) {
+                    $screen->update([
+                        'screen_resolution' => $data['screen_resolution'] ?? $screen->screen_resolution,
+                        'screen_size' => $data['screen_size'] ?? $screen->screen_size,
+                    ]);
+                }
+                break;
+
+            case 'tablet':
+                // No additional attributes to update for tablet
+                break;
+
+            case 'sim':
+                $sim = Sim::where('device_id', $deviceId)->first();
+                if ($sim) {
+                    $sim->update([
+                        'sim_number' => $data['sim_number'] ?? $sim->sim_number,
+                        'sim_type' => $data['sim_type'] ?? $sim->sim_type,
+                    ]);
+                }
+                break;
+
+            case 'other':
+                // No additional action needed
+                break;
+
+            default:
+                throw new \Exception("Invalid device type");
+        }
+
+        DB::commit();
+        $response->getBody()->write(json_encode(["status"=> "success",'message' => 'Device updated successfully', 'device' => $device]));
+        return $response->withHeader('Content-Type', 'application/json');
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        $response->getBody()->write(json_encode(['error' => $e->getMessage()]));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+}
 
     public function getDevicesByType(Request $request, Response $response, array $args) {
         try {
@@ -241,9 +338,28 @@ class DeviceManagementController {
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
     }
+
+    public function getDeviceData(Request $request, Response $response) {
+        $brands = Brand::all();
+        $employees = Employee::where('emp_id','!=',0)->get();
+        $locations = Location::all();
+        $prs = Pr::all();
+        $statuses = Status::all();
+    
+        $data = [
+            'brands' => $brands,
+            'employees' => $employees,
+            'locations' => $locations,
+            'prs' => $prs,
+            'statuses' => $statuses,
+        ];
+    
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json');
+    }
     
 
-    
+
     // Fetch all devices
     public function getAllDevices(Request $request, Response $response) {
         $devices = Device::all();
@@ -252,12 +368,56 @@ class DeviceManagementController {
     }
 
     // Fetch single device
+    // public function getDevice(Request $request, Response $response, $args) {
+    //     $device = Device::find($args['id']);
+    //     if (!$device) {
+    //         $response->getBody()->write(json_encode(['error' => 'Device not found']));
+    //         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+    //     }
+    //     $response->getBody()->write(json_encode($device));
+    //     return $response->withHeader('Content-Type', 'application/json');
+    // }
+
+
     public function getDevice(Request $request, Response $response, $args) {
-        $device = Device::find($args['id']);
+        $deviceId = $args['id'];
+    
+        // Fetch the device with related data
+        $device = Device::with(['brand', 'status', 'location', 'pr', 'employee'])
+            ->find($deviceId);
+    
         if (!$device) {
             $response->getBody()->write(json_encode(['error' => 'Device not found']));
             return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
         }
+    
+        // Fetch type-specific data based on the device type
+        switch (true) {
+            case $device->laptop()->exists():
+                $device->load('laptop');
+                break;
+    
+            case $device->mobile()->exists():
+                $device->load('mobile');
+                break;
+    
+            case $device->screen()->exists():
+                $device->load('screen');
+                break;
+    
+            case $device->tablets()->exists():
+                $device->load('tablets');
+                break;
+    
+            case $device->sim()->exists():
+                $device->load('sim');
+                break;
+    
+            default:
+                // No type-specific data
+                break;
+        }
+    
         $response->getBody()->write(json_encode($device));
         return $response->withHeader('Content-Type', 'application/json');
     }

@@ -48,4 +48,29 @@ class Device extends Model {
     public function employee() {
         return $this->belongsTo(Employee::class, 'emp_id');
     }
+
+    public function laptop()
+    {
+        return $this->hasOne(Laptop::class, 'device_id');
+    }
+
+    public function mobile()
+    {
+        return $this->hasOne(Mobile::class, 'device_id');
+    }
+
+    public function screen()
+    {
+        return $this->hasOne(Screen::class, 'device_id');
+    }
+
+    public function tablets()
+    {
+        return $this->hasOne(Tablets::class, 'device_id');
+    }
+
+    public function sim()
+    {
+        return $this->hasOne(Sim::class, 'device_id');
+    }
 }

@@ -10,7 +10,7 @@ class Pr extends Model {
     public $timestamps = false;
 
     protected $fillable = [
-        'pr_code','pr_path','pr_date'
+        'pr_code','pr_path','pr_date','items_count'
     ];
 
     

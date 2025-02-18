@@ -30,7 +30,7 @@ $app->options('/{routes:.+}', function (Request $request, Response $response) {
 });
 
 $app->get('/devices', [DeviceManagementController::class, 'getAllDevices']);
-$app->get('/devices/{id}', [DeviceManagementController::class, 'getDevice']);
+$app->get('/device/{id}', [DeviceManagementController::class, 'getDevice']);
 $app->put('/devices/{id}/status', [DeviceManagementController::class, 'updateDeviceStatus']);
 $app->post('/addDevice', [DeviceManagementController::class, 'addDevice']);  // Add a new device
 $app->post('/addEmployee', [EmployeeController::class, 'addEmployee']);
@@ -42,7 +42,8 @@ $app->post('/procurement/{pr_id}/upload', [DeviceProcurementController::class, '
 $app->get('/procurement', [DeviceProcurementController::class, 'getAllProcurements']);
 
 $app->get('/devices/type/{type}', [DeviceManagementController::class, 'getDevicesByType']);
-
+$app->put('/device/{id}', [DeviceManagementController::class, 'editDevice']);
+$app->get('/device-data', [DeviceManagementController::class, 'getDeviceData']);
 
 
 
