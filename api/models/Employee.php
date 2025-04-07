@@ -12,4 +12,9 @@ class Employee extends Model {
     protected $fillable = [
         'emp_name', 'emp_email', 'title_id', 'department_id', 'emp_project', 'emp_locationId'
     ];
+
+    public function location()
+    {
+        return $this->belongsTo(Location::class, 'emp_locationId', 'location_id');
+    }
 }

@@ -7,11 +7,12 @@
         "vlucas/phpdotenv": "^5.4",
         "slim/slim": "^4.0",
         "slim/psr7": "^1.0",
-        "illuminate/database": "^10.0"
+        "illuminate/database": "^10.0",
+        "firebase/php-jwt": "^6.11"
     },
     "autoload": {
         "psr-4": {
-            "Api\\": "api/"
+            "Api\\Controllers\\": "api/controllers/"
         }
     },
     "config": {

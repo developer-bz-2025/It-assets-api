@@ -73,4 +73,9 @@ class Device extends Model {
     {
         return $this->hasOne(Sim::class, 'device_id');
     }
+
+    public function locationChangeRequests()
+    {
+        return $this->hasMany(locationChangeRequests::class, 'device_id', 'device_id');
+    }
 }

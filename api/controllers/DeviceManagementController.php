@@ -17,7 +17,9 @@ use Api\Models\Status;
 use Api\Models\Location;
 use Api\Models\Pr;
 use Api\Models\Employee;
-use Api\Models\DeviceProcurement;
+use Api\Models\locationChangeRequests;
+use Api\Models\Admin;
+
 
 class DeviceManagementController {
 
@@ -134,13 +136,14 @@ class DeviceManagementController {
                     break;
 
                 case 'sim':
-                    if (!isset($data['sim_number'], $data['sim_type'])) {
+                    if (!isset($data['sim_number'], $data['sim_type'], $data['sim_carrier'])) {
                         throw new \Exception("Missing SIM specifications");
                     }
                     Sim::create([
                         'device_id' => $device->device_id,
                         'sim_number' => $data['sim_number'],
                         'sim_type' => $data['sim_type'],
+                        'sim_carrier' => $data['sim_carrier'],
                     ]);
                     break;
 
@@ -167,6 +170,7 @@ class DeviceManagementController {
 
     }
 
+
     /**
  * Edit a device's attributes.
  */
@@ -187,9 +191,48 @@ public function editDevice(Request $request, Response $response, array $args) {
         return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
     }
 
+    // Check if location is being changed
+    $isLocationChange = isset($data['location_id']) && $data['location_id'] != $device->location_id;
+
     // Start a transaction
     DB::beginTransaction();
     try {
+
+        $decodedToken = $request->getAttribute('admin');
+        $adminId = $decodedToken->admin_id;
+
+         // Handle location change separately
+         if ($isLocationChange) {
+
+            $existingRequest = LocationChangeRequests::where('device_id', $deviceId)
+            ->where('status', 'pending')
+            ->first();
+    
+        if ($existingRequest) {
+            // Return error response if pending request exists
+            DB::rollBack();
+            $response->getBody()->write(json_encode([
+                'status' => 'error',
+                'error' => 'This device already has a pending location change request',
+                'existing_request_id' => $existingRequest->request_id
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
+
+            // Create approval request instead of updating location directly
+            $locationRequest = LocationChangeRequests::create([
+                'device_id' => $deviceId,
+                'current_location_id' => $device->location_id,
+                'requested_location_id' => $data['location_id'],
+                'requested_by_admin_id' => $adminId, 
+                'status' => 'pending'
+            ]);
+
+            // Notify target location's admin (via email or in-app)
+            // $this->notifyAdminForApproval($locationRequest); // TO DO
+        }
+
+        
         // Update general device attributes
         $device->update([
             'device_sn' => $data['device_sn'] ?? $device->device_sn,
@@ -198,10 +241,12 @@ public function editDevice(Request $request, Response $response, array $args) {
             'device_notes' => $data['device_notes'] ?? $device->device_notes,
             'brand_id' => $data['brand_id'] ?? $device->brand_id,
             'status_id' => $data['status_id'] ?? $device->status_id,
-            'location_id' => $data['location_id'] ?? $device->location_id,
+            //'location_id' => $data['location_id'] ?? $device->location_id,
             'pr_id' => $data['pr_id'] ?? $device->pr_id,
             'emp_id' => $data['emp_id'] ?? $device->emp_id,
         ]);
+
+       
 
         // Update type-specific attributes
         switch ($data['device_type'] ?? null) {
@@ -255,7 +300,11 @@ public function editDevice(Request $request, Response $response, array $args) {
         }
 
         DB::commit();
-        $response->getBody()->write(json_encode(["status"=> "success",'message' => 'Device updated successfully', 'device' => $device]));
+        $response->getBody()->write(json_encode(["status"=> "success", 'message' => $isLocationChange ? 
+        'Device updated. Location change pending approval.' : 
+        'Device updated successfully.',
+        'requires_approval' => $isLocationChange,
+        'device' => $device]));
         return $response->withHeader('Content-Type', 'application/json');
 
     } catch (\Exception $e) {
@@ -264,6 +313,7 @@ public function editDevice(Request $request, Response $response, array $args) {
         return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
     }
 }
+
 
     public function getDevicesByType(Request $request, Response $response, array $args) {
         try {
@@ -339,11 +389,18 @@ public function editDevice(Request $request, Response $response, array $args) {
         }
     }
 
-    public function getDeviceData(Request $request, Response $response) {
+    public function getDeviceData(Request $request, Response $response, array $args) {
+        $deviceType = $args['type'];
+
         $brands = Brand::all();
         $employees = Employee::where('emp_id','!=',0)->get();
         $locations = Location::all();
-        $prs = Pr::all();
+        // $prs = Pr::all();
+        $prs = Pr::join('device_procurement', 'pr.pr_id', '=', 'device_procurement.pr_id')
+             ->when($deviceType, function ($query, $deviceType) {
+                 return $query->where('device_procurement.device_type', $deviceType);
+             })
+             ->get();
         $statuses = Status::all();
     
         $data = [
