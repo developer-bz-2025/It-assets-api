@@ -74,7 +74,7 @@ class DeviceProcurementController
         if (isset($uploadedFiles['pr_document'])) {
             $pdf = $uploadedFiles['pr_document'];
             if ($pdf->getError() === UPLOAD_ERR_OK) {
-                $uploadDir = __DIR__ . "uploads/pr_docs/"; // Adjust the directory path
+                $uploadDir = __DIR__ . "uploads/pr_docs/"; 
                 if (!is_dir($uploadDir)) {
                     mkdir($uploadDir, 0777, true);
                 }
@@ -223,262 +223,325 @@ class DeviceProcurementController
 
     public function getPrDetails(Request $request, Response $response, $args)
     {
-        $pr_id= $args['pr_id'];
-        try{
+        $pr_id = $args['pr_id'];
+        try {
             $prDetails = DB::table('pr')
-            ->leftJoin('device_procurement', 'pr.pr_id', '=', 'device_procurement.pr_id')
-            ->select('pr.pr_id', 'pr.pr_code', 'pr.pr_date', 'pr.pr_path', 'device_procurement.sn', 'device_procurement.device_type', 'device_procurement.acquisition_date')
-            ->where('pr.pr_id',$pr_id)
-            ->get();
-            $response->getBody()->write(json_encode(["status"=>"success","prDetails"=>$prDetails]));
+                ->leftJoin('device_procurement', 'pr.pr_id', '=', 'device_procurement.pr_id')
+                ->select('pr.pr_id', 'pr.pr_code', 'pr.pr_date', 'pr.pr_path', 'device_procurement.sn','device_procurement.id', 'device_procurement.device_type', 'device_procurement.acquisition_date')
+                ->where('pr.pr_id', $pr_id)
+                ->get();
+            $response->getBody()->write(json_encode(["status" => "success", "prDetails" => $prDetails]));
             return $response->withHeader('Content-Type', 'application/json');
 
 
-        }catch (\Exception $e) {
+        } catch (\Exception $e) {
             $response->getBody()->write(json_encode(['error' => $e->getMessage()]));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-        
-    }
-}
 
-public function submitEditRequest(Request $request, Response $response)
-{
-    $data = $request->getParsedBody();
-    $uploadedFiles = $request->getUploadedFiles();
-    $decodedToken = $request->getAttribute('admin');
-            $adminId = $decodedToken->admin_id;
-    
-
-    try {
-        // Validate required fields
-        if (empty($data['pr_id'])) {
-            throw new \Exception('PR ID is required');
         }
+    }
 
-        // Begin database transaction
-        DB::beginTransaction();
+    public function submitEditRequest(Request $request, Response $response)
+    {
+        $data = $request->getParsedBody();
+        $uploadedFiles = $request->getUploadedFiles();
+        $decodedToken = $request->getAttribute('admin');
+        $adminId = $decodedToken->admin_id;
 
-        // Handle file upload if exists
-        $newPrPath = null;
-        if (!empty($uploadedFiles['new_pr_document'])) {
-            $file = $uploadedFiles['new_pr_document'];
-            if ($file->getError() === UPLOAD_ERR_OK) {
-                $uploadDir = __DIR__ . '/../../uploads/pr_docs/';
-                if (!is_dir($uploadDir)) {
-                    mkdir($uploadDir, 0755, true);
+
+        try {
+            // Validate required fields
+            if (empty($data['pr_id'])) {
+                throw new \Exception('PR ID is required');
+            }
+
+            // Begin database transaction
+            DB::beginTransaction();
+
+            // Handle file upload if exists
+            $newPrPath = null;
+            if (!empty($uploadedFiles['new_pr_document'])) {
+                $file = $uploadedFiles['new_pr_document'];
+                if ($file->getError() === UPLOAD_ERR_OK) {
+                    $uploadDir = __DIR__ . '/../../uploads/pr_docs/';
+                    if (!is_dir($uploadDir)) {
+                        mkdir($uploadDir, 0755, true);
+                    }
+                    $filename = uniqid() . '_' . preg_replace('/[^a-zA-Z0-9\.\-]/', '_', $file->getClientFilename());
+                    $file->moveTo($uploadDir . $filename);
+                    $newPrPath = $filename;
                 }
-                $filename = uniqid() . '_' . preg_replace('/[^a-zA-Z0-9\.\-]/', '_', $file->getClientFilename());
-                $file->moveTo($uploadDir . $filename);
-                $newPrPath = $filename;
             }
-        }
 
-        // Get current PR details for comparison
-        $currentPr = DB::table('pr')
-            ->where('pr_id', $data['pr_id'])
-            ->first();
-
-        if (!$currentPr) {
-            throw new \Exception('PR not found');
-        }
-
-        // Insert into pr_edit_requests
-        $requestId = DB::table('pr_edit_requests')->insertGetId([
-            'pr_id' => $data['pr_id'],
-            'requested_by' => $adminId,
-            'old_pr_code' => $currentPr->pr_code,
-            'new_pr_code' => $data['new_pr_code'] ?? $currentPr->pr_code,
-            'old_acquisition_date' => $currentPr->pr_date,
-            'new_acquisition_date' => $data['new_acquisition_date'] ?? $currentPr->pr_date,
-            'old_pr_path' => $currentPr->pr_path,
-            'new_pr_path' => $newPrPath ?? $currentPr->pr_path,
-            'request_date' => date('Y-m-d H:i:s'),
-            'status' => 'pending'
-        ]);
-
-        // Process device changes
-        $deviceChanges = json_decode($data['device_changes'], true);
-        
-        if (!empty($deviceChanges)) {
-            $deviceRecords = [];
-            
-            foreach ($deviceChanges as $change) {
-                $deviceRecords[] = [
-                    'request_id' => $requestId,
-                    'device_id' => $change['device_id'] ?? null,
-                    'old_sn' => $change['old_sn'] ?? null,
-                    'new_sn' => $change['new_sn'] ?? null,
-                    'old_device_type' => $change['old_device_type'] ?? null,
-                    'new_device_type' => $change['new_device_type'] ?? null,
-                    'action' => $change['action']
-                ];
-            }
-            
-            DB::table('pr_edit_devices')->insert($deviceRecords);
-        }
-
-        // Commit transaction
-        DB::commit();
-
-        $response->getBody()->write(json_encode([
-            'status' => 'success',
-            'message' => 'Edit request submitted for approval',
-            'request_id' => $requestId
-        ]));
-        return $response->withHeader('Content-Type', 'application/json');
-
-    } catch (\Exception $e) {
-        // Rollback transaction on error
-        DB::rollBack();
-        
-        $response->getBody()->write(json_encode([
-            'status' => 'error',
-            'message' => $e->getMessage()
-        ]));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-    }
-}
-
-public function getPendingEditRequests(Request $request, Response $response)
-{
-    try {
-
-           // Get the decoded token (JWT)
-    $decodedToken = $request->getAttribute('admin');
-
-    // Check if the user is a Super Admin
-    if (!$decodedToken->is_super_admin) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized: Only Super Admins can get these pending requests']));
-        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
-    }
-
-        $requests = DB::table('pr_edit_requests as r')
-            ->join('admin as a', 'r.requested_by', '=', 'a.admin_id')
-            ->join('pr as p', 'r.pr_id', '=', 'p.pr_id')
-            ->select(
-                'r.*',
-                'a.admin_username as requested_by_name',
-                'p.pr_code as current_pr_code'
-            )
-            ->where('r.status', 'pending')
-            ->orderBy('r.request_date', 'desc')
-            ->get();
-
-        $response->getBody()->write(json_encode([
-            'status' => 'success',
-            'data' => $requests
-        ]));
-        return $response->withHeader('Content-Type', 'application/json');
-
-    } catch (\Exception $e) {
-        $response->getBody()->write(json_encode([
-            'status' => 'error',
-            'message' => $e->getMessage()
-        ]));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-    }
-}
-
-public function processEditRequest(Request $request, Response $response, $args)
-{
-    $requestId = $args['request_id'];
-    $data = $request->getParsedBody();
-    $action = $data['action'] ?? ''; // 'approve' or 'reject'
-
-    try {
-        if (!in_array($action, ['approve', 'reject'])) {
-            throw new \Exception('Invalid action');
-        }
-
-        // Begin transaction
-        DB::beginTransaction();
-
-        // Update request status
-        DB::table('pr_edit_requests')
-            ->where('request_id', $requestId)
-            ->update(['status' => $action === 'approve' ? 'approved' : 'rejected']);
-
-        if ($action === 'approve') {
-            // Get the request details
-            $editRequest = DB::table('pr_edit_requests')
-                ->where('request_id', $requestId)
+            // Get current PR details for comparison
+            $currentPr = DB::table('pr')
+                ->where('pr_id', $data['pr_id'])
                 ->first();
 
-            if (!$editRequest) {
-                throw new \Exception('Edit request not found');
+            if (!$currentPr) {
+                throw new \Exception('PR not found');
             }
 
-            // Update PR if fields changed
-            $updates = [];
-            if ($editRequest->new_pr_code !== $editRequest->old_pr_code) {
-                $updates['pr_code'] = $editRequest->new_pr_code;
-            }
-            if ($editRequest->new_acquisition_date !== $editRequest->old_acquisition_date) {
-                $updates['acquisition_date'] = $editRequest->new_acquisition_date;
-            }
-            if ($editRequest->new_pr_path !== $editRequest->old_pr_path) {
-                $updates['pr_path'] = $editRequest->new_pr_path;
-            }
-
-            if (!empty($updates)) {
-                DB::table('pr')
-                    ->where('pr_id', $editRequest->pr_id)
-                    ->update($updates);
-            }
+            // Insert into pr_edit_requests
+            $requestId = DB::table('pr_edit_requests')->insertGetId([
+                'pr_id' => $data['pr_id'],
+                'requested_by' => $adminId,
+                'old_pr_code' => $currentPr->pr_code,
+                'new_pr_code' => $data['new_pr_code'] ?? $currentPr->pr_code,
+                'old_acquisition_date' => $currentPr->pr_date,
+                'new_acquisition_date' => $data['new_acquisition_date'] ?? $currentPr->pr_date,
+                'old_pr_path' => $currentPr->pr_path,
+                'new_pr_path' => $newPrPath ?? $currentPr->pr_path,
+                'request_date' => date('Y-m-d H:i:s'),
+                'status' => 'pending'
+            ]);
 
             // Process device changes
+            $deviceChanges = json_decode($data['device_changes'], true);
+
+            if (!empty($deviceChanges)) {
+                $deviceRecords = [];
+
+                foreach ($deviceChanges as $change) {
+                    $deviceRecords[] = [
+                        'request_id' => $requestId,
+                        'device_id' => $change['device_id'] ?? null,
+                        'old_sn' => $change['old_sn'] ?? null,
+                        'new_sn' => $change['new_sn'] ?? null,
+                        'old_device_type' => $change['old_device_type'] ?? null,
+                        'new_device_type' => $change['new_device_type'] ?? null,
+                        'action' => $change['action']
+                    ];
+                }
+
+                DB::table('pr_edit_devices')->insert($deviceRecords);
+            }
+
+            // Commit transaction
+            DB::commit();
+
+            $response->getBody()->write(json_encode([
+                'status' => 'success',
+                'message' => 'Edit request submitted for approval',
+                'request_id' => $requestId
+            ]));
+            return $response->withHeader('Content-Type', 'application/json');
+
+        } catch (\Exception $e) {
+            // Rollback transaction on error
+            DB::rollBack();
+
+            $response->getBody()->write(json_encode([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
+    }
+
+    public function getPendingEditRequests(Request $request, Response $response)
+    {
+        try {
+
+            // Get the decoded token (JWT)
+            // $decodedToken = $request->getAttribute('admin');
+
+            // // Check if the user is a Super Admin
+            // if (!$decodedToken->is_super_admin) {
+            //     $response->getBody()->write(json_encode(['error' => 'Unauthorized: Only Super Admins can get these pending requests']));
+            //     return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+            // }
+
+            $requests = DB::table('pr_edit_requests as r')
+                ->join('admin as a', 'r.requested_by', '=', 'a.admin_id')
+                ->join('pr as p', 'r.pr_id', '=', 'p.pr_id')
+                ->select(
+                    'r.*',
+                    'a.admin_username as requested_by_name',
+                    'p.pr_code as current_pr_code'
+                )
+                ->where('r.status', 'pending')
+                ->orderBy('r.request_date', 'desc')
+                ->get();
+
+            // Get device changes for each request
+            $requestsWithChanges = [];
+            foreach ($requests as $request) {
+                $deviceChanges = DB::table('pr_edit_devices')
+                    ->where('request_id', $request->request_id)
+                    ->get();
+
+                $request->device_changes = $deviceChanges;
+                $requestsWithChanges[] = $request;
+            }
+
+
+
+            $response->getBody()->write(json_encode([
+                'status' => 'success',
+                'data' => $requestsWithChanges
+            ]));
+            return $response->withHeader('Content-Type', 'application/json');
+
+        } catch (\Exception $e) {
+            $response->getBody()->write(json_encode([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
+    }
+
+    public function getDeviceChanges(Request $request, Response $response, $args)
+    {
+        $requestId = $args['request_id'];
+
+        try {
+            // Get device changes for this request
             $deviceChanges = DB::table('pr_edit_devices')
                 ->where('request_id', $requestId)
                 ->get();
 
+            // Get additional device info for context
+            $changesWithDetails = [];
             foreach ($deviceChanges as $change) {
-                switch ($change->action) {
-                    case 'update':
-                        DB::table('device_procurement')
-                            ->where('id', $change->device_id)
-                            ->update([
+                $deviceDetails = [];
+
+                // If this is an update or delete, get current device info
+                if ($change->device_id && in_array($change->action, ['update', 'delete'])) {
+                    $deviceDetails = DB::table('device_procurement')
+                        ->where('id', $change->device_id)
+                        ->first();
+                }
+
+                $changesWithDetails[] = [
+                    'id' => $change->id,
+                    'device_id' => $change->device_id,
+                    'action' => $change->action,
+                    'old_sn' => $change->old_sn,
+                    'new_sn' => $change->new_sn,
+                    'old_device_type' => $change->old_device_type,
+                    'new_device_type' => $change->new_device_type,
+                    'current_sn' => $deviceDetails->sn ?? null,
+                    'current_device_type' => $deviceDetails->device_type ?? null
+                ];
+            }
+
+            $response->getBody()->write(json_encode([
+                'status' => 'success',
+                'data' => $changesWithDetails
+            ]));
+            return $response->withHeader('Content-Type', 'application/json');
+
+        } catch (\Exception $e) {
+            $response->getBody()->write(json_encode([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
+    }
+
+    public function processEditRequest(Request $request, Response $response, $args)
+    {
+        $requestId = $args['requestId'];
+        $data = $request->getParsedBody();
+        $action = $data['action'] ?? ''; // 'approve' or 'reject'
+
+        try {
+            if (!in_array($action, ['approve', 'reject'])) {
+                throw new \Exception('Invalid action');
+            }
+
+            // Begin transaction
+            DB::beginTransaction();
+
+            // Update request status
+            DB::table('pr_edit_requests')
+                ->where('request_id', $requestId)
+                ->update(['status' => $action === 'approve' ? 'approved' : 'rejected']);
+
+            if ($action === 'approve') {
+                // Get the request details
+                $editRequest = DB::table('pr_edit_requests')
+                    ->where('request_id', $requestId)
+                    ->first();
+
+                if (!$editRequest) {
+                    throw new \Exception('Edit request not found');
+                }
+
+                // Update PR if fields changed
+                $updates = [];
+                if ($editRequest->new_pr_code !== $editRequest->old_pr_code) {
+                    $updates['pr_code'] = $editRequest->new_pr_code;
+                }
+                if ($editRequest->new_acquisition_date !== $editRequest->old_acquisition_date) {
+                    $updates['pr_date'] = $editRequest->new_acquisition_date;
+                }
+                if ($editRequest->new_pr_path !== $editRequest->old_pr_path) {
+                    $updates['pr_path'] = $editRequest->new_pr_path;
+                }
+
+                if (!empty($updates)) {
+                    DB::table('pr')
+                        ->where('pr_id', $editRequest->pr_id)
+                        ->update($updates);
+                }
+
+                // Process device changes
+                $deviceChanges = DB::table('pr_edit_devices')
+                    ->where('request_id', $requestId)
+                    ->get();
+
+                foreach ($deviceChanges as $change) {
+                    switch ($change->action) {
+                        case 'update':
+                            DB::table('device_procurement')
+                                ->where('id', $change->device_id)
+                                ->update([
+                                    'sn' => $change->new_sn,
+                                    'device_type' => $change->new_device_type
+                                ]);
+                            break;
+
+                        case 'delete':
+                            DB::table('device_procurement')
+                                ->where('id', $change->device_id)
+                                ->delete();
+                            break;
+
+                        case 'add':
+                            DB::table('device_procurement')->insert([
+                                'pr_id' => $editRequest->pr_id,
                                 'sn' => $change->new_sn,
-                                'device_type' => $change->new_device_type
+                                'device_type' => $change->new_device_type,
+                                'acquisition_date' => $editRequest->new_acquisition_date ?? $editRequest->old_acquisition_date
                             ]);
-                        break;
-                        
-                    case 'delete':
-                        DB::table('device_procurement')
-                            ->where('id', $change->device_id)
-                            ->delete();
-                        break;
-                        
-                    case 'add':
-                        DB::table('device_procurement')->insert([
-                            'pr_id' => $editRequest->pr_id,
-                            'sn' => $change->new_sn,
-                            'device_type' => $change->new_device_type,
-                            'acquisition_date' => $editRequest->new_acquisition_date ?? $editRequest->old_acquisition_date
-                        ]);
-                        break;
+                            break;
+                    }
                 }
             }
+
+            // Commit transaction
+            DB::commit();
+
+            $response->getBody()->write(json_encode([
+                'status' => 'success',
+                'message' => "Request {$action}d"
+            ]));
+            return $response->withHeader('Content-Type', 'application/json');
+
+        } catch (\Exception $e) {
+            // Rollback transaction on error
+            DB::rollBack();
+
+            $response->getBody()->write(json_encode([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
-
-        // Commit transaction
-        DB::commit();
-
-        $response->getBody()->write(json_encode([
-            'status' => 'success',
-            'message' => "Request {$action}d"
-        ]));
-        return $response->withHeader('Content-Type', 'application/json');
-
-    } catch (\Exception $e) {
-        // Rollback transaction on error
-        DB::rollBack();
-        
-        $response->getBody()->write(json_encode([
-            'status' => 'error',
-            'message' => $e->getMessage()
-        ]));
-        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
     }
-}
 
 }

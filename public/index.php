@@ -134,7 +134,14 @@ $app->get('/api/procurements/{pr_id}/details', [DeviceProcurementController::cla
 $app->post('/api/procurements/edit-request', [DeviceProcurementController::class, 'submitEditRequest'])
     ->add($jwtMiddleware);
 
+
 $app->get('/api/procurements/edit-requests/pending', [DeviceProcurementController::class, 'getPendingEditRequests'])
+    ->add($jwtMiddleware);
+
+$app->get('/api/procurements/edit-requests/{requestId}/device-changes', [DeviceProcurementController::class, 'getDeviceChanges'])
+    ->add($jwtMiddleware);
+
+$app->post('/api/procurements/edit-requests/{requestId}/process', [DeviceProcurementController::class, 'processEditRequest'])
     ->add($jwtMiddleware);
 
 
