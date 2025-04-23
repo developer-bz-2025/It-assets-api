@@ -144,6 +144,9 @@ $app->get('/api/procurements/edit-requests/{requestId}/device-changes', [DeviceP
 $app->post('/api/procurements/edit-requests/{requestId}/process', [DeviceProcurementController::class, 'processEditRequest'])
     ->add($jwtMiddleware);
 
+    $app->get('/api/requests-count', [DeviceManagementController::class, 'getRequestsCount'])
+    ->add($jwtMiddleware);
+
 
 $app->get('/', function ($request, $response, $args) {
     // Path to the static folder and the index.html file

@@ -424,6 +424,46 @@ public function editDevice(Request $request, Response $response, array $args) {
         return $response->withHeader('Content-Type', 'application/json');
     }
 
+    
+
+    public function getRequestsCount(Request $request, Response $response) {
+          // Get admin_id from JWT token
+          $decodedToken = $request->getAttribute('admin');
+          $adminId = $decodedToken->admin_id;
+  
+  
+          // Get admin's location through relationships
+          $admin = Admin::with(['employee.location'])
+              ->findOrFail($adminId);
+  
+          if (!$admin->employee || !$admin->employee->emp_locationId) {
+           
+          $response->getBody()->write(json_encode(['error' => 'Admin location not found']));
+          return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+          }
+  
+          $myLocationId = $admin->employee->emp_locationId;
+  
+          // Get pending requests for this location
+          $locationEditCount = LocationChangeRequests::with([
+                  'device',
+                  'current_location',
+                  'requested_location',
+                  'requested_by.employee'
+              ])
+              ->where('requested_location_id', $myLocationId)
+              ->where('status', 'pending')
+              ->count();
+
+        $prEditCount = DB::table('pr_edit_requests')->where('status', 'pending')->count();
+
+        $response->getBody()->write(json_encode([
+            'prEditCount' => $prEditCount,
+            'locationEditCount' => $locationEditCount
+        ]));
+                return $response->withHeader('Content-Type', 'application/json');
+    }
+
     // Fetch single device
     // public function getDevice(Request $request, Response $response, $args) {
     //     $device = Device::find($args['id']);

@@ -7,6 +7,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use Api\Models\DeviceProcurement;
 use Api\Models\Pr;
 use Illuminate\Database\Capsule\Manager as DB;
+use Api\Models\Notification;
+use Api\Models\NotificationRecipient;
 
 class DeviceProcurementController
 {
@@ -74,7 +76,7 @@ class DeviceProcurementController
         if (isset($uploadedFiles['pr_document'])) {
             $pdf = $uploadedFiles['pr_document'];
             if ($pdf->getError() === UPLOAD_ERR_OK) {
-                $uploadDir = __DIR__ . "uploads/pr_docs/"; 
+                $uploadDir = __DIR__ . "/../controllersuploads/pr_docs/";
                 if (!is_dir($uploadDir)) {
                     mkdir($uploadDir, 0777, true);
                 }
@@ -227,7 +229,7 @@ class DeviceProcurementController
         try {
             $prDetails = DB::table('pr')
                 ->leftJoin('device_procurement', 'pr.pr_id', '=', 'device_procurement.pr_id')
-                ->select('pr.pr_id', 'pr.pr_code', 'pr.pr_date', 'pr.pr_path', 'device_procurement.sn','device_procurement.id', 'device_procurement.device_type', 'device_procurement.acquisition_date')
+                ->select('pr.pr_id', 'pr.pr_code', 'pr.pr_date', 'pr.pr_path', 'device_procurement.sn', 'device_procurement.id', 'device_procurement.device_type', 'device_procurement.acquisition_date')
                 ->where('pr.pr_id', $pr_id)
                 ->get();
             $response->getBody()->write(json_encode(["status" => "success", "prDetails" => $prDetails]));
@@ -249,10 +251,25 @@ class DeviceProcurementController
         $adminId = $decodedToken->admin_id;
 
 
+
         try {
             // Validate required fields
             if (empty($data['pr_id'])) {
                 throw new \Exception('PR ID is required');
+            }
+
+            // check if the or has already edit request
+            $prEditRequest = DB::table('pr_edit_requests')
+                ->where('pr_id', $data['pr_id'])
+                ->where('status', 'pending')
+                ->first();
+
+            if ($prEditRequest) {
+                $response->getBody()->write(json_encode([
+                    'status' => 'failure',
+                    'message' => 'Already has Edit request'
+                ]));
+                return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
             }
 
             // Begin database transaction
@@ -263,7 +280,7 @@ class DeviceProcurementController
             if (!empty($uploadedFiles['new_pr_document'])) {
                 $file = $uploadedFiles['new_pr_document'];
                 if ($file->getError() === UPLOAD_ERR_OK) {
-                    $uploadDir = __DIR__ . '/../../uploads/pr_docs/';
+                    $uploadDir = __DIR__ . '/../controllersuploads/pr_docs/';
                     if (!is_dir($uploadDir)) {
                         mkdir($uploadDir, 0755, true);
                     }
@@ -297,7 +314,12 @@ class DeviceProcurementController
             ]);
 
             // Process device changes
-            $deviceChanges = json_decode($data['device_changes'], true);
+            // $deviceChanges = json_decode($data['device_changes'], true);
+            $deviceChanges = [];
+
+            if (!empty($data['device_changes'])) {
+                $deviceChanges = json_decode($data['device_changes'], true);
+            }
 
             if (!empty($deviceChanges)) {
                 $deviceRecords = [];
@@ -447,6 +469,8 @@ class DeviceProcurementController
         $requestId = $args['requestId'];
         $data = $request->getParsedBody();
         $action = $data['action'] ?? ''; // 'approve' or 'reject'
+        $decodedToken = $request->getAttribute('admin');
+        $adminId = $decodedToken->admin_id;
 
         try {
             if (!in_array($action, ['approve', 'reject'])) {
@@ -461,15 +485,22 @@ class DeviceProcurementController
                 ->where('request_id', $requestId)
                 ->update(['status' => $action === 'approve' ? 'approved' : 'rejected']);
 
+            // Get the request details
+            $editRequest = DB::table('pr_edit_requests')
+                ->where('request_id', $requestId)
+                ->first();
+
+            $pr = DB::table('pr')
+                ->where('pr_id', $editRequest->pr_id)
+                ->first();
+
             if ($action === 'approve') {
-                // Get the request details
-                $editRequest = DB::table('pr_edit_requests')
-                    ->where('request_id', $requestId)
-                    ->first();
 
                 if (!$editRequest) {
                     throw new \Exception('Edit request not found');
                 }
+
+
 
                 // Update PR if fields changed
                 $updates = [];
@@ -522,6 +553,34 @@ class DeviceProcurementController
                     }
                 }
             }
+
+            $notificationTitle = $action === 'approve'
+                ? 'PR Edit Request Approved'
+                : 'PR Edit Request Rejected';
+
+            $notificationContent = $action === 'approve'
+                ? sprintf('Your PR edit request for PR ID %s has been approved', $editRequest->pr_id)
+                : sprintf('Your PR edit request for PR ID %s has been rejected', $editRequest->pr_id);
+
+            // include PR code if available
+            if ($pr && isset($pr->pr_code)) {
+                $notificationContent = $action === 'approve'
+                    ? sprintf('Your PR edit request for %s (ID: %s) has been approved', $pr->pr_code, $editRequest->pr_id)
+                    : sprintf('Your PR edit request for %s (ID: %s) has been rejected', $pr->pr_code, $editRequest->pr_id);
+            }
+
+            $notification = Notification::create([
+                'title' => $notificationTitle,
+                'content' => $notificationContent
+            ]);
+
+            // Create notification recipient (assuming requested_by_admin_id exists in pr_edit_requests)
+            NotificationRecipient::create([
+                'notification_id' => $notification->notification_id,
+                'sender_admin_id' => $adminId,
+                'recipient_admin_id' => $editRequest->requested_by,
+                'is_read' => false
+            ]);
 
             // Commit transaction
             DB::commit();

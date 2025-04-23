@@ -7,6 +7,7 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use Firebase\JWT\JWT;
 use Api\Models\Admin;
 use Api\Models\SuperAdmin;
+use Api\Models\ProcurementAdmin;
 
 class AuthController
 {
@@ -49,6 +50,14 @@ class AuthController
 
         }
 
+        // Determine role by checking which table contains the emp_id
+        $adminType = 'admin'; // Default role
+        if (SuperAdmin::where('emp_id', $admin->emp_id)->exists()) {
+            $adminType = 'super_admin';
+        } elseif (ProcurementAdmin::where('emp_id', $admin->emp_id)->exists()) {
+            $adminType = 'procurement_admin';
+        }
+
         // Check if the admin is also a super admin
         $isSuperAdmin = SuperAdmin::where('emp_id', $admin->emp_id)->exists();
 
@@ -58,31 +67,33 @@ class AuthController
             'id' => $admin->id,
             'username' => $admin->username,
             // 'email' => $admin->email,
-            'is_super_admin' => $isSuperAdmin,
+            'role' => $adminType, // 'admin', 'super_admin', or 'procurement_admin'
+            'is_super_admin' => ($adminType === 'super_admin'),
+            'is_procurement_admin' => ($adminType === 'procurement_admin'),
             'emp_id' => $admin->emp_id,
             'exp' => time() + 86400, // Token expires in 24 hour
         ];
         $token = JWT::encode($payload, $this->secretKey, 'HS256');
 
         // Return token
-        $response->getBody()->write(json_encode(['status'=>'success','message'=>'login success','token' => $token]));
+        $response->getBody()->write(json_encode(['status' => 'success', 'message' => 'login success', 'token' => $token]));
         return $response->withHeader('Content-Type', 'application/json');
     }
 
- 
+
 
     // Create new admin method
     public function createAdmin(Request $request, Response $response): Response
     {
 
         // Get the decoded token (JWT)
-    $decodedToken = $request->getAttribute('admin');
+        $decodedToken = $request->getAttribute('admin');
 
-    // Check if the user is a Super Admin
-    if (!$decodedToken->is_super_admin) {
-        $response->getBody()->write(json_encode(['error' => 'Unauthorized: Only Super Admins can create Admins']));
-        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
-    }
+        // Check if the user is a Super Admin
+        if (!$decodedToken->is_super_admin) {
+            $response->getBody()->write(json_encode(['error' => 'Unauthorized: Only Super Admins can create Admins']));
+            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        }
 
         $data = $request->getParsedBody();
         $username = $data['username'] ?? '';
@@ -96,11 +107,17 @@ class AuthController
 
         }
 
-        // Check if admin with the same email already exists
+        // Check if admin with the same username already exists
         if (Admin::where('admin_username', $username)->exists()) {
             $response->getBody()->write(json_encode(['error' => 'Admin with this username already exists']));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
 
+        }
+
+        // ✅ Check if admin with the same emp_id already exists
+        if (Admin::where('emp_id', $emp_id)->exists()) {
+            $response->getBody()->write(json_encode(['error' => 'An admin is already assigned to this employee ID']));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
 
         // Hash password
@@ -124,11 +141,11 @@ class AuthController
             // Get admin_id from JWT token
             $decodedToken = $request->getAttribute('admin');
             $adminId = $decodedToken->admin_id;
-    
+
             // Fetch admin with related employee and location info
             $admin = Admin::with(['employee.location'])
                 ->findOrFail($adminId);
-    
+
             // Format response data
             $responseData = [
                 'admin_id' => $admin->admin_id,
@@ -143,16 +160,16 @@ class AuthController
                     ]
                 ]
             ];
-    
-          
+
+
 
             $response->getBody()->write(json_encode(['status' => 'success', 'data' => $responseData]));
-        return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
-    
-        } catch (\Exception $e) {
-        
+            return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
 
-            $response->getBody()->write(json_encode(['status' => 'error','message' => 'Failed to fetch admin info','error' => $e->getMessage()]));
+        } catch (\Exception $e) {
+
+
+            $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Failed to fetch admin info', 'error' => $e->getMessage()]));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }
     }
