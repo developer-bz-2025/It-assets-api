@@ -106,6 +106,8 @@ $app->get('/api/procurement', [DeviceProcurementController::class, 'getAllProcur
 
 $app->get('/api/devices/type/{type}', [DeviceManagementController::class, 'getDevicesByType'])->add($jwtMiddleware);
 $app->put('/api/device/{id}', [DeviceManagementController::class, 'editDevice'])->add($jwtMiddleware);
+$app->put('/api/update-maintenance/{id}', [DeviceManagementController::class, 'updateMaintenanceStatus'])->add($jwtMiddleware);
+$app->get('/api/get-maintenance-devices', [DeviceManagementController::class, 'getDevicesUnderMaintenance'])->add($jwtMiddleware);
 $app->get('/api/device-data/{type}', [DeviceManagementController::class, 'getDeviceData'])->add($jwtMiddleware);
 $app->get('/api/my-pending', [LocationChangeController::class, 'getMyPendingRequests'])->add($jwtMiddleware);
 
@@ -146,6 +148,9 @@ $app->post('/api/procurements/edit-requests/{requestId}/process', [DeviceProcure
 
     $app->get('/api/requests-count', [DeviceManagementController::class, 'getRequestsCount'])
     ->add($jwtMiddleware);
+
+    $app->post('/api/sync-employees', [EmployeeController::class, 'syncEmployees']);
+
 
 
 $app->get('/', function ($request, $response, $args) {
