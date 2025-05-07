@@ -45,7 +45,6 @@ public function markAsRead(Request $request, Response $response, array $args)
 
         if (!$notificationRecipient) {
       
-
             $response->getBody()->write(json_encode(['status' => 'error','message' => 'Notification not found or unauthorized']));
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
         }

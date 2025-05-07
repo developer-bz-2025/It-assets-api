@@ -78,4 +78,9 @@ class Device extends Model {
     {
         return $this->hasMany(locationChangeRequests::class, 'device_id', 'device_id');
     }
+
+    public function maintenance()
+{
+    return $this->hasMany(Maintenance::class, 'device_id');
+}
 }

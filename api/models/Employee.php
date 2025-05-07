@@ -10,7 +10,7 @@ class Employee extends Model {
     public $timestamps = false;
 
     protected $fillable = [
-        'emp_name', 'emp_email', 'title_id', 'department_id', 'emp_project', 'emp_locationId'
+        'emp_name','emp_no', 'emp_email', 'title_id', 'department_id', 'emp_project', 'emp_locationId'
     ];
 
     public function location()
