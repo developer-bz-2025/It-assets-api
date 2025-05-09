@@ -3,6 +3,7 @@
 namespace Api\Controllers;
 
 use Illuminate\Database\Capsule\Manager as DB;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -740,4 +741,417 @@ class DeviceManagementController
         $response->getBody()->write(json_encode(['message' => 'Device status updated']));
         return $response->withHeader('Content-Type', 'application/json');
     }
+
+
+
+public function importLaptopsFromExcel(Request $request, Response $response): Response
+{
+    $uploadedFiles = $request->getUploadedFiles();
+    $file = $uploadedFiles['file'] ?? null;
+
+    if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
+        $response->getBody()->write(json_encode(['error' => 'Invalid file']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    try {
+        $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
+        $sheet = $spreadsheet->getSheetByName('laptop');
+        if (!$sheet) {
+            throw new \Exception('Sheet "laptop" not found');
+        }
+
+        $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
+        $duplicates = [];
+
+        foreach ($rows as $i => $row) {
+            if ($i === 1) continue; // Skip header row
+
+            $brandName   = trim($row['A']);
+            $model       = trim($row['B']);
+            $serial      = trim($row['C']);
+            $locationName = trim($row['D']);
+            $acqDate     = trim($row['E']);
+            $ram         = trim($row['F']);
+            $storageType     = trim($row['G']);
+            $storageSize     = trim($row['H']);
+            $cpu         = trim($row['I']);
+            $gth         = trim($row['J']);
+            $notes         = trim($row['K']);
+
+            if (empty($serial)) continue; // Skip if serial number is empty
+
+            // Check for duplicate serial number
+            if (Device::where('device_sn', $serial)->exists()) {
+                $duplicates[] = $serial;
+                continue;
+            }
+
+            // Find or create brand and location
+            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+            $location = Location::firstOrCreate(['location_name' => $locationName]);
+
+            // Insert into device table
+            $device = new Device();
+            $device->device_model = $model;
+            $device->device_sn = $serial;
+            $device->device_acquisition_date = $acqDate;
+            $device->brand_id = $brand->brand_id;
+            $device->location_id = $location->location_id;
+            $device->emp_id = null;       // default
+            $device->status_id = 1;    // default
+            $device->pr_id = 1;        // default
+            $device->device_notes = $notes;       
+            $device->save();
+
+            // Insert into laptop table
+            $laptop = new Laptop();
+            $laptop->device_id = $device->device_id;
+            $laptop->laptop_ram = $ram;
+            $laptop->laptop_storageType = $storageType;
+            $laptop->laptop_storageSize = $storageSize;
+            $laptop->laptop_processor = $cpu;
+            $laptop->laptop_gth = $gth;
+            $laptop->save();
+        }
+
+        $response->getBody()->write(json_encode([
+            'message' => 'Laptops imported successfully',
+            'duplicates_skipped' => $duplicates
+        ]));
+        return $response->withHeader('Content-Type', 'application/json');
+
+    } catch (\Exception $e) {
+        $response->getBody()->write(json_encode([
+            'error' => 'Import failed: ' . $e->getMessage()
+        ]));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+}
+
+public function importMobilesFromExcel(Request $request, Response $response): Response
+{
+    $uploadedFiles = $request->getUploadedFiles();
+    $file = $uploadedFiles['file'] ?? null;
+
+    if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
+        $response->getBody()->write(json_encode(['error' => 'Invalid file']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    try {
+        $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
+        $sheet = $spreadsheet->getSheetByName('mobile');
+        if (!$sheet) {
+            throw new \Exception('Sheet "mobile" not found');
+        }
+
+        $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
+        $duplicates = [];
+
+        foreach ($rows as $i => $row) {
+            if ($i === 1) continue; // Skip header row
+
+            $brandName   = trim($row['A']);
+            $model       = trim($row['B']);
+            $serial      = trim($row['C']);
+            $locationName = trim($row['D']);
+            $acqDate     = trim($row['E']);
+            $notes         = trim($row['F']);
+
+            if (empty($serial)) continue; // Skip if serial number is empty
+
+            // Check for duplicate serial number
+            if (Device::where('device_sn', $serial)->exists()) {
+                $duplicates[] = $serial;
+                continue;
+            }
+
+            // Find or create brand and location
+            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+            $location = Location::firstOrCreate(['location_name' => $locationName]);
+
+            // Insert into device table
+            $device = new Device();
+            $device->device_model = $model;
+            $device->device_sn = $serial;
+            $device->device_acquisition_date = $acqDate;
+            $device->brand_id = $brand->brand_id;
+            $device->location_id = $location->location_id;
+            $device->emp_id = null;       // default
+            $device->status_id = 1;    // default
+            $device->pr_id = 1;        // default
+            $device->device_notes = $notes;       
+            $device->save();
+
+            // Insert into laptop table
+            $mobile = new Mobile();
+            $mobile->device_id = $device->device_id;
+ 
+            $mobile->save();
+        }
+
+        $response->getBody()->write(json_encode([
+            'message' => 'Mobiles imported successfully',
+            'duplicates_skipped' => $duplicates
+        ]));
+        return $response->withHeader('Content-Type', 'application/json');
+
+    } catch (\Exception $e) {
+        $response->getBody()->write(json_encode([
+            'error' => 'Import failed: ' . $e->getMessage()
+        ]));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+}
+
+public function importSimsFromExcel(Request $request, Response $response): Response
+{
+    $uploadedFiles = $request->getUploadedFiles();
+    $file = $uploadedFiles['file'] ?? null;
+
+    if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
+        $response->getBody()->write(json_encode(['error' => 'Invalid file']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    try {
+        $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
+        $sheet = $spreadsheet->getSheetByName('sim');
+        if (!$sheet) {
+            throw new \Exception('Sheet "sim" not found');
+        }
+
+        $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
+        $duplicateSNs = [];
+        $duplicateSIMs = [];
+
+        foreach ($rows as $i => $row) {
+            if ($i === 1) continue; // Skip header row
+
+            $brandName   = trim($row['A']);
+            $model       = trim($row['B']);
+            $serial      = trim($row['C']);
+            $locationName = trim($row['D']);
+            $acqDate     = trim($row['E']);
+            $sim_number     = trim($row['F']);
+            $sim_type     = trim($row['G']);
+            $sim_carrier     = trim($row['H']);
+            $notes         = trim($row['I']);
+
+            if (empty($serial) || empty($sim_number)) continue; // Skip if serial number is empty
+
+            // Check for duplicate serial number
+            if (Device::where('device_sn', $serial)->exists()) {
+                $duplicateSNs[] = $serial;
+                continue;
+            }
+             // Check for duplicate SIM number
+             if (Sim::where('sim_number', $sim_number)->exists()) {
+                $duplicateSIMs[] = $sim_number;
+                continue;
+            }
+            
+
+            // Find or create brand and location
+            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+            $location = Location::firstOrCreate(['location_name' => $locationName]);
+
+            // Insert into device table
+            $device = new Device();
+            $device->device_model = $model;
+            $device->device_sn = $serial;
+            $device->device_acquisition_date = $acqDate;
+            $device->brand_id = $brand->brand_id;
+            $device->location_id = $location->location_id;
+            $device->emp_id = null;       // default
+            $device->status_id = 1;    // default
+            $device->pr_id = 1;        // default
+            $device->device_notes = $notes;       
+            $device->save();
+
+            // Insert into Sim table
+            $sim = new Sim();
+            $sim->device_id = $device->device_id;
+            $sim->sim_number = $sim_number;
+            $sim->sim_type = $sim_type;
+            $sim->sim_carrier = $sim_carrier;
+            $sim->save();
+        }
+
+        $response->getBody()->write(json_encode([
+            'message' => 'Sims imported successfully',
+            'duplicates_skipped' => [
+                'device_sns' => $duplicateSNs,
+                'sim_numbers' => $duplicateSIMs
+            ]
+        ]));
+        return $response->withHeader('Content-Type', 'application/json');
+
+    } catch (\Exception $e) {
+        $response->getBody()->write(json_encode([
+            'error' => 'Import failed: ' . $e->getMessage()
+        ]));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+}
+
+public function importScreensFromExcel(Request $request, Response $response): Response
+{
+    $uploadedFiles = $request->getUploadedFiles();
+    $file = $uploadedFiles['file'] ?? null;
+
+    if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
+        $response->getBody()->write(json_encode(['error' => 'Invalid file']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    try {
+        $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
+        $sheet = $spreadsheet->getSheetByName('screen');
+        if (!$sheet) {
+            throw new \Exception('Sheet "screen" not found');
+        }
+
+        $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
+        $duplicateSNs = [];
+
+        foreach ($rows as $i => $row) {
+            if ($i === 1) continue; // Skip header row
+
+            $brandName   = trim($row['A']);
+            $model       = trim($row['B']);
+            $serial      = trim($row['C']);
+            $locationName = trim($row['D']);
+            $acqDate     = trim($row['E']);
+            $screen_resolution     = trim($row['F']);
+            $screen_size     = trim($row['G']);
+            $notes         = trim($row['H']);
+
+            if (empty($serial)) continue; // Skip if serial number is empty
+
+            // Check for duplicate serial number
+            if (Device::where('device_sn', $serial)->exists()) {
+                $duplicateSNs[] = $serial;
+                continue;
+            }
+          
+            
+
+            // Find or create brand and location
+            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+            $location = Location::firstOrCreate(['location_name' => $locationName]);
+
+            // Insert into device table
+            $device = new Device();
+            $device->device_model = $model;
+            $device->device_sn = $serial;
+            $device->device_acquisition_date = $acqDate;
+            $device->brand_id = $brand->brand_id;
+            $device->location_id = $location->location_id;
+            $device->emp_id = null;       // default
+            $device->status_id = 1;    // default
+            $device->pr_id = 1;        // default
+            $device->device_notes = $notes;       
+            $device->save();
+
+            // Insert into Sim table
+            $screen = new Screen();
+            $screen->device_id = $device->device_id;
+            $screen->screen_resolution = $screen_resolution;
+            $screen->screen_size = $screen_size;
+            $screen->save();
+        }
+
+        $response->getBody()->write(json_encode([
+            'message' => 'Screens imported successfully',
+            'duplicates_skipped' => $duplicateSNs
+        ]));
+        return $response->withHeader('Content-Type', 'application/json');
+
+    } catch (\Exception $e) {
+        $response->getBody()->write(json_encode([
+            'error' => 'Import failed: ' . $e->getMessage()
+        ]));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+}
+
+public function importTabletsFromExcel(Request $request, Response $response): Response
+{
+    $uploadedFiles = $request->getUploadedFiles();
+    $file = $uploadedFiles['file'] ?? null;
+
+    if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
+        $response->getBody()->write(json_encode(['error' => 'Invalid file']));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+
+    try {
+        $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
+        $sheet = $spreadsheet->getSheetByName('tablet');
+        if (!$sheet) {
+            throw new \Exception('Sheet "tablet" not found');
+        }
+
+        $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
+        $duplicates = [];
+
+        foreach ($rows as $i => $row) {
+            if ($i === 1) continue; // Skip header row
+
+            $brandName   = trim($row['A']);
+            $model       = trim($row['B']);
+            $serial      = trim($row['C']);
+            $locationName = trim($row['D']);
+            $acqDate     = trim($row['E']);
+            $notes         = trim($row['F']);
+
+            if (empty($serial)) continue; // Skip if serial number is empty
+
+            // Check for duplicate serial number
+            if (Device::where('device_sn', $serial)->exists()) {
+                $duplicates[] = $serial;
+                continue;
+            }
+
+            // Find or create brand and location
+            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+            $location = Location::firstOrCreate(['location_name' => $locationName]);
+
+            // Insert into device table
+            $device = new Device();
+            $device->device_model = $model;
+            $device->device_sn = $serial;
+            $device->device_acquisition_date = $acqDate;
+            $device->brand_id = $brand->brand_id;
+            $device->location_id = $location->location_id;
+            $device->emp_id = null;       // default
+            $device->status_id = 1;    // default
+            $device->pr_id = 1;        // default
+            $device->device_notes = $notes;       
+            $device->save();
+
+            // Insert into laptop table
+            $tablet = new Tablets();
+            $tablet->device_id = $device->device_id;
+ 
+            $tablet->save();
+        }
+
+        $response->getBody()->write(json_encode([
+            'message' => 'Tablets imported successfully',
+            'duplicates_skipped' => $duplicates
+        ]));
+        return $response->withHeader('Content-Type', 'application/json');
+
+    } catch (\Exception $e) {
+        $response->getBody()->write(json_encode([
+            'error' => 'Import failed: ' . $e->getMessage()
+        ]));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+}
+
+
 }

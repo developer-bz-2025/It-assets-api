@@ -111,6 +111,14 @@ $app->get('/api/get-maintenance-devices', [DeviceManagementController::class, 'g
 $app->get('/api/device-data/{type}', [DeviceManagementController::class, 'getDeviceData'])->add($jwtMiddleware);
 $app->get('/api/my-pending', [LocationChangeController::class, 'getMyPendingRequests'])->add($jwtMiddleware);
 
+// import device via excel
+$app->post('/api/import-laptop-devices', [DeviceManagementController::class, 'importLaptopsFromExcel'])->add($jwtMiddleware);
+$app->post('/api/import-mobile-devices', [DeviceManagementController::class, 'importMobilesFromExcel'])->add($jwtMiddleware);
+$app->post('/api/import-sim-devices', [DeviceManagementController::class, 'importSimsFromExcel'])->add($jwtMiddleware);
+$app->post('/api/import-screen-devices', [DeviceManagementController::class, 'importScreensFromExcel'])->add($jwtMiddleware);
+$app->post('/api/import-tablet-devices', [DeviceManagementController::class, 'importTabletsFromExcel'])->add($jwtMiddleware);
+
+
 $app->get('/api/admin/info', [AuthController::class, 'adminInfo'])
     ->add($jwtMiddleware);
 
@@ -146,10 +154,10 @@ $app->get('/api/procurements/edit-requests/{requestId}/device-changes', [DeviceP
 $app->post('/api/procurements/edit-requests/{requestId}/process', [DeviceProcurementController::class, 'processEditRequest'])
     ->add($jwtMiddleware);
 
-    $app->get('/api/requests-count', [DeviceManagementController::class, 'getRequestsCount'])
+$app->get('/api/requests-count', [DeviceManagementController::class, 'getRequestsCount'])
     ->add($jwtMiddleware);
 
-    $app->post('/api/sync-employees', [EmployeeController::class, 'syncEmployees']);
+$app->post('/api/sync-employees', [EmployeeController::class, 'syncEmployees']);
 
 
 
