@@ -9,10 +9,17 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 use Api\Models\NotificationRecipient;
 use Carbon\Carbon;
+use Api\Services\ActivityLoggerService;
 
 
 class NotificationController{
 
+    private ActivityLoggerService $logger;
+
+    public function __construct(ActivityLoggerService $logger)
+    {
+        $this->logger = $logger;
+    }
     public function getAdminNotifications(Request $request, Response $response)
 {
      // Get admin_id from JWT token

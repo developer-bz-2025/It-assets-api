@@ -8,15 +8,18 @@ use Firebase\JWT\JWT;
 use Api\Models\Admin;
 use Api\Models\SuperAdmin;
 use Api\Models\ProcurementAdmin;
+use Api\Services\ActivityLoggerService;
 
 class AuthController
 {
     private $secretKey;
+    private ActivityLoggerService $logger;
 
-    public function __construct()
+    public function __construct(ActivityLoggerService $logger)
     {
         // Load the secret key from the environment
         $this->secretKey = $_ENV['JWT_SECRET_KEY'];
+        $this->logger = $logger;
     }
 
     // Login method
@@ -30,7 +33,6 @@ class AuthController
         if (empty($username) || empty($password)) {
             $response->getBody()->write(json_encode(['error' => "user name and password are required"]));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-
         }
 
         // Find admin by username
@@ -38,16 +40,20 @@ class AuthController
 
         // Verify username
         if (!$admin) {
+            // Log failed login attempt - invalid username
+            $this->logger->log(0, 'login_failed');
+            
             $response->getBody()->write(json_encode(['error' => "user name is not correct!"]));
             return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
-
         }
 
         // Verify password
         if (!password_verify($password, $admin->admin_password)) {
+            // Log failed login attempt - invalid password
+            $this->logger->log($admin->admin_id, 'login_failed');
+            
             $response->getBody()->write(json_encode(['error' => "Invalid password"]));
             return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
-
         }
 
         // Determine role by checking which table contains the emp_id
@@ -75,17 +81,17 @@ class AuthController
         ];
         $token = JWT::encode($payload, $this->secretKey, 'HS256');
 
+        // Log successful login
+        $this->logger->log($admin->admin_id, 'login_success');
+
         // Return token
         $response->getBody()->write(json_encode(['status' => 'success', 'message' => 'login success', 'token' => $token]));
         return $response->withHeader('Content-Type', 'application/json');
     }
 
-
-
     // Create new admin method
     public function createAdmin(Request $request, Response $response): Response
     {
-
         // Get the decoded token (JWT)
         $decodedToken = $request->getAttribute('admin');
 
@@ -104,14 +110,12 @@ class AuthController
         if (empty($username) || empty($password) || empty($emp_id)) {
             $response->getBody()->write(json_encode(['error' => 'All fields are required']));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-
         }
 
         // Check if admin with the same username already exists
         if (Admin::where('admin_username', $username)->exists()) {
             $response->getBody()->write(json_encode(['error' => 'Admin with this username already exists']));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-
         }
 
         // ✅ Check if admin with the same emp_id already exists
@@ -130,9 +134,11 @@ class AuthController
             'emp_id' => $emp_id,
         ]);
 
+        // Log the admin creation
+        $this->logger->log($decodedToken->admin_id, 'create_admin');
+
         $response->getBody()->write(json_encode(['message' => 'Admin created successfully', 'admin' => $admin]));
         return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
-
     }
 
     public function adminInfo(Request $request, Response $response): Response
@@ -161,14 +167,9 @@ class AuthController
                 ]
             ];
 
-
-
             $response->getBody()->write(json_encode(['status' => 'success', 'data' => $responseData]));
             return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
-
         } catch (\Exception $e) {
-
-
             $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Failed to fetch admin info', 'error' => $e->getMessage()]));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }

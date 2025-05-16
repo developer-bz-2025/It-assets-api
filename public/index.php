@@ -1,5 +1,10 @@
 <?php
 
+// Debug autoloader
+spl_autoload_register(function ($class) {
+    error_log("Trying to load class: " . $class);
+});
+
 use Slim\Factory\AppFactory;
 use Api\Controllers\DeviceManagementController;
 use Api\Controllers\EmployeeController;
@@ -7,6 +12,7 @@ use Api\Controllers\DeviceProcurementController;
 use Api\Controllers\AuthController;
 use Api\Controllers\LocationChangeController;
 use Api\Controllers\NotificationController;
+use Api\Controllers\ActivityLogController;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -38,6 +44,14 @@ $dotenv->load();
 
 // Create Slim App
 $app = AppFactory::create();
+
+// Set up dependencies
+$container = new \DI\Container();
+AppFactory::setContainer($container);
+
+// Load dependencies
+$dependencies = require __DIR__ . '/../api/config/dependencies.php';
+$dependencies($container);
 
 // Secret key for JWT
 $secretKey = $_ENV['JWT_SECRET_KEY'];
@@ -88,78 +102,160 @@ $jwtMiddleware = function (Request $request, RequestHandlerInterface $handler) u
 
 
 // Authentication routes
-$app->post('/api/login', [AuthController::class, 'login']);
-$app->post('/api/logout', [AuthController::class, 'logout']);
-$app->post('/api/create-admin', [AuthController::class, 'createAdmin'])->add($jwtMiddleware);
+$app->post('/api/login', function (Request $request, Response $response) use ($container) {
+    return $container->get(AuthController::class)->login($request, $response);
+});
 
-$app->get('/api/devices', [DeviceManagementController::class, 'getAllDevices'])->add($jwtMiddleware);
-$app->get('/api/device/{id}', [DeviceManagementController::class, 'getDevice'])->add($jwtMiddleware);
-$app->put('/api/devices/{id}/status', [DeviceManagementController::class, 'updateDeviceStatus'])->add($jwtMiddleware);
-$app->post('/api/addDevice', [DeviceManagementController::class, 'addDevice'])->add($jwtMiddleware);  // Add a new device
-$app->post('/api/addEmployee', [EmployeeController::class, 'addEmployee'])->add($jwtMiddleware);
+$app->post('/api/logout', function (Request $request, Response $response) use ($container) {
+    return $container->get(AuthController::class)->logout($request, $response);
+});
 
-$app->get('/api/employees', EmployeeController::class . ':getAllEmployees')->add($jwtMiddleware);
+$app->post('/api/create-admin', function (Request $request, Response $response) use ($container) {
+    return $container->get(AuthController::class)->createAdmin($request, $response);
+})->add($jwtMiddleware);
 
-$app->post('/api/procurement', [DeviceProcurementController::class, 'addProcurement'])->add($jwtMiddleware);
-$app->post('/api/procurement/{pr_id}/upload', [DeviceProcurementController::class, 'uploadPrDocument'])->add($jwtMiddleware);
-$app->get('/api/procurement', [DeviceProcurementController::class, 'getAllProcurements'])->add($jwtMiddleware);
+$app->get('/api/devices', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->getAllDevices($request, $response);
+})->add($jwtMiddleware);
 
-$app->get('/api/devices/type/{type}', [DeviceManagementController::class, 'getDevicesByType'])->add($jwtMiddleware);
-$app->put('/api/device/{id}', [DeviceManagementController::class, 'editDevice'])->add($jwtMiddleware);
-$app->put('/api/update-maintenance/{id}', [DeviceManagementController::class, 'updateMaintenanceStatus'])->add($jwtMiddleware);
-$app->get('/api/get-maintenance-devices', [DeviceManagementController::class, 'getDevicesUnderMaintenance'])->add($jwtMiddleware);
-$app->get('/api/device-data/{type}', [DeviceManagementController::class, 'getDeviceData'])->add($jwtMiddleware);
-$app->get('/api/my-pending', [LocationChangeController::class, 'getMyPendingRequests'])->add($jwtMiddleware);
+$app->get('/api/device/{id}', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceManagementController::class)->getDevice($request, $response, $args);
+})->add($jwtMiddleware);
+
+$app->put('/api/devices/{id}/status', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceManagementController::class)->updateDeviceStatus($request, $response, $args);
+})->add($jwtMiddleware);
+
+$app->post('/api/addDevice', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->addDevice($request, $response);
+})->add($jwtMiddleware);
+
+$app->post('/api/addEmployee', function (Request $request, Response $response) use ($container) {
+    return $container->get(EmployeeController::class)->addEmployee($request, $response);
+})->add($jwtMiddleware);
+
+$app->get('/api/employees', function (Request $request, Response $response) use ($container) {
+    return $container->get(EmployeeController::class)->getAllEmployees($request, $response);
+})->add($jwtMiddleware);
+
+$app->post('/api/procurement', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceProcurementController::class)->addProcurement($request, $response);
+})->add($jwtMiddleware);
+
+$app->post('/api/procurement/{pr_id}/upload', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceProcurementController::class)->uploadPrDocument($request, $response, $args);
+})->add($jwtMiddleware);
+
+$app->get('/api/procurement', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceProcurementController::class)->getAllProcurements($request, $response);
+})->add($jwtMiddleware);
+
+$app->get('/api/devices/type/{type}', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceManagementController::class)->getDevicesByType($request, $response, $args);
+})->add($jwtMiddleware);
+
+$app->put('/api/device/{id}', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceManagementController::class)->editDevice($request, $response, $args);
+})->add($jwtMiddleware);
+
+$app->put('/api/update-maintenance/{id}', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceManagementController::class)->updateMaintenanceStatus($request, $response, $args);
+})->add($jwtMiddleware);
+
+$app->get('/api/get-maintenance-devices', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->getDevicesUnderMaintenance($request, $response);
+})->add($jwtMiddleware);
+
+$app->get('/api/device-data/{type}', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceManagementController::class)->getDeviceData($request, $response, $args);
+})->add($jwtMiddleware);
+
+$app->get('/api/my-pending', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(LocationChangeController::class)->getMyPendingRequests($request, $response);
+})->add($jwtMiddleware);
 
 // import device via excel
-$app->post('/api/import-laptop-devices', [DeviceManagementController::class, 'importLaptopsFromExcel'])->add($jwtMiddleware);
-$app->post('/api/import-mobile-devices', [DeviceManagementController::class, 'importMobilesFromExcel'])->add($jwtMiddleware);
-$app->post('/api/import-sim-devices', [DeviceManagementController::class, 'importSimsFromExcel'])->add($jwtMiddleware);
-$app->post('/api/import-screen-devices', [DeviceManagementController::class, 'importScreensFromExcel'])->add($jwtMiddleware);
-$app->post('/api/import-tablet-devices', [DeviceManagementController::class, 'importTabletsFromExcel'])->add($jwtMiddleware);
+$app->post('/api/import-laptop-devices', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->importLaptopsFromExcel($request, $response);
+})->add($jwtMiddleware);
+
+$app->post('/api/import-mobile-devices', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->importMobilesFromExcel($request, $response);
+})->add($jwtMiddleware);
+
+$app->post('/api/import-sim-devices', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->importSimsFromExcel($request, $response);
+})->add($jwtMiddleware);
+
+$app->post('/api/import-screen-devices', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->importScreensFromExcel($request, $response);
+})->add($jwtMiddleware);
+
+$app->post('/api/import-tablet-devices', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->importTabletsFromExcel($request, $response);
+})->add($jwtMiddleware);
 
 
-$app->get('/api/admin/info', [AuthController::class, 'adminInfo'])
-    ->add($jwtMiddleware);
+$app->get('/api/admin/info', function (Request $request, Response $response) use ($container) {
+    return $container->get(AuthController::class)->adminInfo($request, $response);
+})->add($jwtMiddleware);
 
-$app->get('/api/admin/notifications', [NotificationController::class, 'getAdminNotifications'])
-    ->add($jwtMiddleware);
+$app->get('/api/admin/notifications', function (Request $request, Response $response) use ($container) {
+    return $container->get(NotificationController::class)->getAdminNotifications($request, $response);
+})->add($jwtMiddleware);
 
 // Approve/Reject Location Change
-$app->post('/api/location-change-requests/{request_id}/approve', [LocationChangeController::class, 'approveLocationChange'])
-    ->add($jwtMiddleware);
+$app->post('/api/location-change-requests/{request_id}/approve', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(LocationChangeController::class)->approveLocationChange($request, $response, $args);
+})->add($jwtMiddleware);
 
-$app->post('/api/location-change-requests/{request_id}/reject', [LocationChangeController::class, 'rejectLocationChange'])
-    ->add($jwtMiddleware);
+$app->post('/api/location-change-requests/{request_id}/reject', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(LocationChangeController::class)->rejectLocationChange($request, $response, $args);
+})->add($jwtMiddleware);
 
-$app->post('/api/notifications/{notification_id}/read', [NotificationController::class, 'markAsRead'])
-    ->add($jwtMiddleware);
+$app->post('/api/notifications/{notification_id}/read', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(NotificationController::class)->markAsRead($request, $response, $args);
+})->add($jwtMiddleware);
 
-$app->post('/api/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead'])
-    ->add($jwtMiddleware);
+$app->post('/api/notifications/mark-all-read', function (Request $request, Response $response) use ($container) {
+    return $container->get(NotificationController::class)->markAllAsRead($request, $response);
+})->add($jwtMiddleware);
 
-$app->get('/api/procurements/{pr_id}/details', [DeviceProcurementController::class, 'getPrDetails'])
-    ->add($jwtMiddleware);
+$app->get('/api/procurements/{pr_id}/details', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceProcurementController::class)->getPrDetails($request, $response, $args);
+})->add($jwtMiddleware);
 
-$app->post('/api/procurements/edit-request', [DeviceProcurementController::class, 'submitEditRequest'])
-    ->add($jwtMiddleware);
+$app->post('/api/procurements/edit-request', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceProcurementController::class)->submitEditRequest($request, $response);
+})->add($jwtMiddleware);
 
+$app->get('/api/procurements/edit-requests/pending', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceProcurementController::class)->getPendingEditRequests($request, $response);
+})->add($jwtMiddleware);
 
-$app->get('/api/procurements/edit-requests/pending', [DeviceProcurementController::class, 'getPendingEditRequests'])
-    ->add($jwtMiddleware);
+$app->get('/api/procurements/edit-requests/{requestId}/device-changes', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceProcurementController::class)->getDeviceChanges($request, $response, $args);
+})->add($jwtMiddleware);
 
-$app->get('/api/procurements/edit-requests/{requestId}/device-changes', [DeviceProcurementController::class, 'getDeviceChanges'])
-    ->add($jwtMiddleware);
+$app->post('/api/procurements/edit-requests/{requestId}/process', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceProcurementController::class)->processEditRequest($request, $response, $args);
+})->add($jwtMiddleware);
 
-$app->post('/api/procurements/edit-requests/{requestId}/process', [DeviceProcurementController::class, 'processEditRequest'])
-    ->add($jwtMiddleware);
+$app->get('/api/requests-count', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->getRequestsCount($request, $response);
+})->add($jwtMiddleware);
 
-$app->get('/api/requests-count', [DeviceManagementController::class, 'getRequestsCount'])
-    ->add($jwtMiddleware);
+$app->post('/api/sync-employees', function (Request $request, Response $response) use ($container) {
+    return $container->get(EmployeeController::class)->syncEmployees($request, $response);
+});
 
-$app->post('/api/sync-employees', [EmployeeController::class, 'syncEmployees']);
+$app->get('/api/device-counts', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->getDeviceCounts($request, $response);
+})->add($jwtMiddleware);
 
-
+$app->get('/api/activity-logs', function (Request $request, Response $response) use ($container) {
+    return $container->get(ActivityLogController::class)->getLatest($request, $response);
+})->add($jwtMiddleware);
 
 $app->get('/', function ($request, $response, $args) {
     // Path to the static folder and the index.html file

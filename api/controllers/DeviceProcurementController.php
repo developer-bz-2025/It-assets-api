@@ -9,9 +9,16 @@ use Api\Models\Pr;
 use Illuminate\Database\Capsule\Manager as DB;
 use Api\Models\Notification;
 use Api\Models\NotificationRecipient;
+use Api\Services\ActivityLoggerService;
 
 class DeviceProcurementController
 {
+    private ActivityLoggerService $logger;
+
+    public function __construct(ActivityLoggerService $logger)
+    {
+        $this->logger = $logger;
+    }
 
     // Add a new procurement record
     public function addProcurement(Request $request, Response $response)
@@ -114,6 +121,12 @@ class DeviceProcurementController
             DeviceProcurement::insert($procurements); // Bulk insert for efficiency
 
             DB::commit();
+
+            // Log the activity
+            $decodedToken = $request->getAttribute('admin');
+            $adminId = $decodedToken->admin_id;
+            $this->logger->log($adminId, 'add_procurement');
+
             $response->getBody()->write(json_encode([
                 "status" => "success",
                 'message' => 'Procurement record added',
@@ -165,6 +178,11 @@ class DeviceProcurementController
         if ($pr) {
             $pr->pr_path = 'uploads/' . $filename;
             $pr->save();
+
+            // Log the activity
+            $decodedToken = $request->getAttribute('admin');
+            $adminId = $decodedToken->admin_id;
+            $this->logger->log($adminId, 'upload_pr_document');
         }
 
         $response->getBody()->write(json_encode(['message' => 'File uploaded successfully', 'path' => $pr->pr_path]));
@@ -341,6 +359,9 @@ class DeviceProcurementController
 
             // Commit transaction
             DB::commit();
+
+            // Log the activity
+            $this->logger->log($adminId, 'request_edit_procurement_request');
 
             $response->getBody()->write(json_encode([
                 'status' => 'success',
@@ -584,6 +605,9 @@ class DeviceProcurementController
 
             // Commit transaction
             DB::commit();
+
+            // Log the activity
+            $this->logger->log($adminId, $action === 'approve' ? 'approve_procurement_request' : 'reject_procurement_request');
 
             $response->getBody()->write(json_encode([
                 'status' => 'success',

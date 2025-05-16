@@ -23,15 +23,25 @@ use Api\Models\locationChangeRequests;
 use Api\Models\Admin;
 use Api\Models\MaintenanceStatus;
 use Api\Models\Maintenance;
-
+use Api\Services\ActivityLoggerService;
 
 class DeviceManagementController
 {
+    private ActivityLoggerService $logger;
+
+    public function __construct(ActivityLoggerService $logger)
+    {
+        $this->logger = $logger;
+    }
 
     // Add a new device
     public function addDevice(Request $request, Response $response)
     {
         $data = $request->getParsedBody();
+        
+        // Get admin_id from JWT token
+        $decodedToken = $request->getAttribute('admin');
+        $adminId = $decodedToken->admin_id;
 
         // Validate required fields
         $requiredFields = [
@@ -163,7 +173,10 @@ class DeviceManagementController
             }
 
             DB::commit();
-            // return $response->withJson(['message' => 'Device added successfully', 'device' => $device], 201);
+            
+            // Log the activity
+            $this->logger->log($adminId, 'add_single_device');
+            
             $response->getBody()->write(json_encode(['status' => 'success', 'message' => 'Device added successfully', 'device' => $device]));
             return $response->withHeader('Content-Type', 'application/json');
 
@@ -171,10 +184,7 @@ class DeviceManagementController
             DB::rollBack();
             $response->getBody()->write(json_encode(['error' => $e->getMessage()]));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-
-
         }
-
     }
 
 
@@ -272,6 +282,14 @@ class DeviceManagementController
             }
 
             DB::commit();
+            
+            // Get admin_id from JWT token
+            $decodedToken = $request->getAttribute('admin');
+            $adminId = $decodedToken->admin_id;
+            
+            // Log the maintenance status update
+            $this->logger->log($adminId, 'update_maintenance_status');
+            
             $response->getBody()->write(json_encode(['status' => 'success', "status name" => $newStatus->name]));
             return $response->withHeader('Content-Type', 'application/json');
 
@@ -345,6 +363,9 @@ class DeviceManagementController
                     'status' => 'pending'
                 ]);
 
+                // Log the location change request
+                $this->logger->log($adminId, 'request_location_change');
+
                 $status = Status::find($data['status_id']);
                 $shouldClearEmp = $status && strtolower($status->status_name) !== 'in_use';
 
@@ -412,11 +433,13 @@ class DeviceManagementController
                             'laptop_processor' => $data['laptop_processor'] ?? $laptop->laptop_processor,
                             'laptop_gth' => $data['laptop_gth'] ?? $laptop->laptop_gth,
                         ]);
+                        $this->logger->log($adminId, 'edit_laptop');
                     }
                     break;
 
                 case 'mobile':
                     // No additional attributes to update for mobile
+                    $this->logger->log($adminId, 'edit_mobile');
                     break;
 
                 case 'screen':
@@ -426,11 +449,13 @@ class DeviceManagementController
                             'screen_resolution' => $data['screen_resolution'] ?? $screen->screen_resolution,
                             'screen_size' => $data['screen_size'] ?? $screen->screen_size,
                         ]);
+                        $this->logger->log($adminId, 'edit_screen');
                     }
                     break;
 
                 case 'tablet':
                     // No additional attributes to update for tablet
+                    $this->logger->log($adminId, 'edit_tablet');
                     break;
 
                 case 'sim':
@@ -440,11 +465,13 @@ class DeviceManagementController
                             'sim_number' => $data['sim_number'] ?? $sim->sim_number,
                             'sim_type' => $data['sim_type'] ?? $sim->sim_type,
                         ]);
+                        $this->logger->log($adminId, 'edit_sim');
                     }
                     break;
 
                 case 'other':
                     // No additional action needed
+                    $this->logger->log($adminId, 'edit_other');
                     break;
 
                 default:
@@ -484,6 +511,10 @@ class DeviceManagementController
             }
 
             DB::commit();
+            
+            // Log the device edit
+            $this->logger->log($adminId, 'update_device');
+
             $response->getBody()->write(json_encode([
                 "status" => "success",
                 'message' => $isLocationChange ?
@@ -738,6 +769,13 @@ class DeviceManagementController
         $device->status_id = $data['status_id'];
         $device->save();
 
+        // Get admin_id from JWT token
+        $decodedToken = $request->getAttribute('admin');
+        $adminId = $decodedToken->admin_id;
+        
+        // Log the status update
+        $this->logger->log($adminId, 'update_device_status');
+
         $response->getBody()->write(json_encode(['message' => 'Device status updated']));
         return $response->withHeader('Content-Type', 'application/json');
     }
@@ -746,6 +784,10 @@ class DeviceManagementController
 
 public function importLaptopsFromExcel(Request $request, Response $response): Response
 {
+    // Get admin_id from JWT token
+    $decodedToken = $request->getAttribute('admin');
+    $adminId = $decodedToken->admin_id;
+
     $uploadedFiles = $request->getUploadedFiles();
     $file = $uploadedFiles['file'] ?? null;
 
@@ -758,72 +800,134 @@ public function importLaptopsFromExcel(Request $request, Response $response): Re
         $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
         $sheet = $spreadsheet->getSheetByName('laptop');
         if (!$sheet) {
-            throw new \Exception('Sheet "laptop" not found');
+            throw new \Exception('Sheet "laptop" not found in the Excel file. Please make sure you have a sheet named "laptop".');
         }
 
         $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
         $duplicates = [];
+        $importedCount = 0;
+        $errors = [];
+        $requiredColumns = ['A' => 'Brand', 'B' => 'Model', 'C' => 'Serial Number', 'D' => 'Location'];
 
-        foreach ($rows as $i => $row) {
-            if ($i === 1) continue; // Skip header row
-
-            $brandName   = trim($row['A']);
-            $model       = trim($row['B']);
-            $serial      = trim($row['C']);
-            $locationName = trim($row['D']);
-            $acqDate     = trim($row['E']);
-            $ram         = trim($row['F']);
-            $storageType     = trim($row['G']);
-            $storageSize     = trim($row['H']);
-            $cpu         = trim($row['I']);
-            $gth         = trim($row['J']);
-            $notes         = trim($row['K']);
-
-            if (empty($serial)) continue; // Skip if serial number is empty
-
-            // Check for duplicate serial number
-            if (Device::where('device_sn', $serial)->exists()) {
-                $duplicates[] = $serial;
-                continue;
+        // Validate header row
+        foreach ($requiredColumns as $col => $name) {
+            if (empty($rows[1][$col])) {
+                throw new \Exception("Required column '{$name}' not found in column {$col} of the Excel sheet.");
             }
-
-            // Find or create brand and location
-            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
-            $location = Location::firstOrCreate(['location_name' => $locationName]);
-
-            // Insert into device table
-            $device = new Device();
-            $device->device_model = $model;
-            $device->device_sn = $serial;
-            $device->device_acquisition_date = $acqDate;
-            $device->brand_id = $brand->brand_id;
-            $device->location_id = $location->location_id;
-            $device->emp_id = null;       // default
-            $device->status_id = 1;    // default
-            $device->pr_id = 1;        // default
-            $device->device_notes = $notes;       
-            $device->save();
-
-            // Insert into laptop table
-            $laptop = new Laptop();
-            $laptop->device_id = $device->device_id;
-            $laptop->laptop_ram = $ram;
-            $laptop->laptop_storageType = $storageType;
-            $laptop->laptop_storageSize = $storageSize;
-            $laptop->laptop_processor = $cpu;
-            $laptop->laptop_gth = $gth;
-            $laptop->save();
         }
 
+        foreach ($rows as $rowIndex => $row) {
+            if ($rowIndex === 1) continue; // Skip header row
+
+            try {
+                $brandName   = trim($row['A'] ?? '');
+                $model      = trim($row['B'] ?? '');
+                $serial     = trim($row['C'] ?? '');
+                $locationName = trim($row['D'] ?? '');
+                $acqDate    = trim($row['E'] ?? '');
+                $ram        = trim($row['F'] ?? '');
+                $storageType    = trim($row['G'] ?? '');
+                $storageSize    = trim($row['H'] ?? '');
+                $cpu        = trim($row['I'] ?? '');
+                $gth        = trim($row['J'] ?? '');
+                $notes      = trim($row['K'] ?? '');
+
+                // Validate required fields
+                $validationErrors = [];
+                if (empty($brandName)) $validationErrors[] = "Brand name is required";
+                if (empty($model)) $validationErrors[] = "Model is required";
+                if (empty($serial)) $validationErrors[] = "Serial number is required";
+                if (empty($locationName)) $validationErrors[] = "Location is required";
+                if (empty($acqDate)) $validationErrors[] = "Acquisition date is required";
+                if (empty($ram)) $validationErrors[] = "RAM is required";
+                if (empty($storageType)) $validationErrors[] = "Storage type is required";
+                if (empty($storageSize)) $validationErrors[] = "Storage size is required";
+                if (empty($cpu)) $validationErrors[] = "CPU/Processor is required";
+                if (empty($gth)) $validationErrors[] = "GTH is required";
+
+                if (!empty($validationErrors)) {
+                    throw new \Exception("Row {$rowIndex}: " . implode(", ", $validationErrors));
+                }
+
+                // Validate date format if provided
+                $date = \DateTime::createFromFormat('Y-m-d', $acqDate);
+                if (!$date || $date->format('Y-m-d') !== $acqDate) {
+                    throw new \Exception("Row {$rowIndex}: Invalid date format for Acquisition Date. Use YYYY-MM-DD format.");
+                }
+
+                // Check for duplicate serial number
+                if (Device::where('device_sn', $serial)->exists()) {
+                    $duplicates[] = "Row {$rowIndex}: Serial number '{$serial}' already exists";
+                    continue;
+                }
+
+                // Find or create brand and location
+                try {
+                    $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find brand '{$brandName}': " . $e->getMessage());
+                }
+
+                try {
+                    $location = Location::firstOrCreate(['location_name' => $locationName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find location '{$locationName}': " . $e->getMessage());
+                }
+
+                // Insert into device table
+                $device = new Device();
+                $device->device_model = $model;
+                $device->device_sn = $serial;
+                $device->device_acquisition_date = $acqDate;
+                $device->brand_id = $brand->brand_id;
+                $device->location_id = $location->location_id;
+                $device->emp_id = null;
+                $device->status_id = 1;
+                $device->pr_id = 1;
+                $device->device_notes = $notes;
+                $device->save();
+
+                // Insert into laptop table
+                $laptop = new Laptop();
+                $laptop->device_id = $device->device_id;
+                $laptop->laptop_ram = $ram;
+                $laptop->laptop_storageType = $storageType;
+                $laptop->laptop_storageSize = $storageSize;
+                $laptop->laptop_processor = $cpu;
+                $laptop->laptop_gth = $gth;
+                $laptop->save();
+
+                $importedCount++;
+
+            } catch (\Exception $e) {
+                $errors[] = $e->getMessage();
+                // Continue with next row
+                continue;
+            }
+        }
+
+        // Log the bulk import activity
+        error_log("About to log import_bulk_laptops action for admin ID: " . $adminId);
+        $logResult = $this->logger->log($adminId, 'import_bulk_laptops');
+        error_log("Logging result: " . ($logResult ? 'success' : 'failed'));
+
         $response->getBody()->write(json_encode([
-            'message' => 'Laptops imported successfully',
-            'duplicates_skipped' => $duplicates
+            'status' => 'completed',
+            'message' => 'Import process completed',
+            'imported_count' => $importedCount,
+            'duplicates' => $duplicates,
+            'errors' => $errors,
+            'log_result' => $logResult
         ]));
         return $response->withHeader('Content-Type', 'application/json');
 
     } catch (\Exception $e) {
         $response->getBody()->write(json_encode([
-            'error' => 'Import failed: ' . $e->getMessage()
+            'status' => 'failed',
+            'error' => $e->getMessage(),
+            'imported_count' => $importedCount ?? 0,
+            'duplicates' => $duplicates ?? [],
+            'errors' => $errors ?? []
         ]));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
@@ -831,6 +935,10 @@ public function importLaptopsFromExcel(Request $request, Response $response): Re
 
 public function importMobilesFromExcel(Request $request, Response $response): Response
 {
+    // Get admin_id from JWT token
+    $decodedToken = $request->getAttribute('admin');
+    $adminId = $decodedToken->admin_id;
+
     $uploadedFiles = $request->getUploadedFiles();
     $file = $uploadedFiles['file'] ?? null;
 
@@ -843,63 +951,119 @@ public function importMobilesFromExcel(Request $request, Response $response): Re
         $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
         $sheet = $spreadsheet->getSheetByName('mobile');
         if (!$sheet) {
-            throw new \Exception('Sheet "mobile" not found');
+            throw new \Exception('Sheet "mobile" not found in the Excel file. Please make sure you have a sheet named "mobile".');
         }
 
         $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
         $duplicates = [];
+        $importedCount = 0;
+        $errors = [];
+        $requiredColumns = ['A' => 'Brand', 'B' => 'Model', 'C' => 'Serial Number', 'D' => 'Location'];
 
-        foreach ($rows as $i => $row) {
-            if ($i === 1) continue; // Skip header row
-
-            $brandName   = trim($row['A']);
-            $model       = trim($row['B']);
-            $serial      = trim($row['C']);
-            $locationName = trim($row['D']);
-            $acqDate     = trim($row['E']);
-            $notes         = trim($row['F']);
-
-            if (empty($serial)) continue; // Skip if serial number is empty
-
-            // Check for duplicate serial number
-            if (Device::where('device_sn', $serial)->exists()) {
-                $duplicates[] = $serial;
-                continue;
+        // Validate header row
+        foreach ($requiredColumns as $col => $name) {
+            if (empty($rows[1][$col])) {
+                throw new \Exception("Required column '{$name}' not found in column {$col} of the Excel sheet.");
             }
-
-            // Find or create brand and location
-            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
-            $location = Location::firstOrCreate(['location_name' => $locationName]);
-
-            // Insert into device table
-            $device = new Device();
-            $device->device_model = $model;
-            $device->device_sn = $serial;
-            $device->device_acquisition_date = $acqDate;
-            $device->brand_id = $brand->brand_id;
-            $device->location_id = $location->location_id;
-            $device->emp_id = null;       // default
-            $device->status_id = 1;    // default
-            $device->pr_id = 1;        // default
-            $device->device_notes = $notes;       
-            $device->save();
-
-            // Insert into laptop table
-            $mobile = new Mobile();
-            $mobile->device_id = $device->device_id;
- 
-            $mobile->save();
         }
 
+        foreach ($rows as $rowIndex => $row) {
+            if ($rowIndex === 1) continue; // Skip header row
+
+            try {
+                $brandName   = trim($row['A'] ?? '');
+                $model      = trim($row['B'] ?? '');
+                $serial     = trim($row['C'] ?? '');
+                $locationName = trim($row['D'] ?? '');
+                $acqDate    = trim($row['E'] ?? '');
+                $notes      = trim($row['F'] ?? '');
+
+                // Validate required fields
+                $validationErrors = [];
+                if (empty($brandName)) $validationErrors[] = "Brand name is required";
+                if (empty($model)) $validationErrors[] = "Model is required";
+                if (empty($serial)) $validationErrors[] = "Serial number is required";
+                if (empty($locationName)) $validationErrors[] = "Location is required";
+                if (empty($acqDate)) $validationErrors[] = "Acquisition date is required";
+
+                if (!empty($validationErrors)) {
+                    throw new \Exception("Row {$rowIndex}: " . implode(", ", $validationErrors));
+                }
+
+                // Validate date format if provided
+                $date = \DateTime::createFromFormat('Y-m-d', $acqDate);
+                if (!$date || $date->format('Y-m-d') !== $acqDate) {
+                    throw new \Exception("Row {$rowIndex}: Invalid date format for Acquisition Date. Use YYYY-MM-DD format.");
+                }
+
+                // Check for duplicate serial number
+                if (Device::where('device_sn', $serial)->exists()) {
+                    $duplicates[] = "Row {$rowIndex}: Serial number '{$serial}' already exists";
+                    continue;
+                }
+
+                // Find or create brand and location
+                try {
+                    $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find brand '{$brandName}': " . $e->getMessage());
+                }
+
+                try {
+                    $location = Location::firstOrCreate(['location_name' => $locationName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find location '{$locationName}': " . $e->getMessage());
+                }
+
+                // Insert into device table
+                $device = new Device();
+                $device->device_model = $model;
+                $device->device_sn = $serial;
+                $device->device_acquisition_date = $acqDate;
+                $device->brand_id = $brand->brand_id;
+                $device->location_id = $location->location_id;
+                $device->emp_id = null;
+                $device->status_id = 1;
+                $device->pr_id = 1;
+                $device->device_notes = $notes;
+                $device->save();
+
+            // Insert into mobile table
+            $mobile = new Mobile();
+            $mobile->device_id = $device->device_id;
+            $mobile->save();
+
+                $importedCount++;
+
+            } catch (\Exception $e) {
+                $errors[] = $e->getMessage();
+                // Continue with next row
+                continue;
+            }
+        }
+
+        // Log the bulk import activity
+        error_log("About to log import_bulk_mobiles action for admin ID: " . $adminId);
+        $logResult = $this->logger->log($adminId, 'import_bulk_mobiles');
+        error_log("Logging result: " . ($logResult ? 'success' : 'failed'));
+
         $response->getBody()->write(json_encode([
-            'message' => 'Mobiles imported successfully',
-            'duplicates_skipped' => $duplicates
+            'status' => 'completed',
+            'message' => 'Import process completed',
+            'imported_count' => $importedCount,
+            'duplicates' => $duplicates,
+            'errors' => $errors,
+            'log_result' => $logResult
         ]));
         return $response->withHeader('Content-Type', 'application/json');
 
     } catch (\Exception $e) {
         $response->getBody()->write(json_encode([
-            'error' => 'Import failed: ' . $e->getMessage()
+            'status' => 'failed',
+            'error' => $e->getMessage(),
+            'imported_count' => $importedCount ?? 0,
+            'duplicates' => $duplicates ?? [],
+            'errors' => $errors ?? []
         ]));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
@@ -907,6 +1071,10 @@ public function importMobilesFromExcel(Request $request, Response $response): Re
 
 public function importSimsFromExcel(Request $request, Response $response): Response
 {
+    // Get admin_id from JWT token
+    $decodedToken = $request->getAttribute('admin');
+    $adminId = $decodedToken->admin_id;
+
     $uploadedFiles = $request->getUploadedFiles();
     $file = $uploadedFiles['file'] ?? null;
 
@@ -919,78 +1087,142 @@ public function importSimsFromExcel(Request $request, Response $response): Respo
         $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
         $sheet = $spreadsheet->getSheetByName('sim');
         if (!$sheet) {
-            throw new \Exception('Sheet "sim" not found');
+            throw new \Exception('Sheet "sim" not found in the Excel file. Please make sure you have a sheet named "sim".');
         }
 
         $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
-        $duplicateSNs = [];
-        $duplicateSIMs = [];
+        $duplicates = [];
+        $importedCount = 0;
+        $errors = [];
+        $requiredColumns = [
+            'A' => 'Brand',
+            'B' => 'Model',
+            'C' => 'Serial Number',
+            'D' => 'Location',
+            'E' => 'Acquisition Date',
+            'F' => 'SIM Number',
+            'G' => 'SIM Type',
+            'H' => 'SIM Carrier'
+        ];
 
-        foreach ($rows as $i => $row) {
-            if ($i === 1) continue; // Skip header row
-
-            $brandName   = trim($row['A']);
-            $model       = trim($row['B']);
-            $serial      = trim($row['C']);
-            $locationName = trim($row['D']);
-            $acqDate     = trim($row['E']);
-            $sim_number     = trim($row['F']);
-            $sim_type     = trim($row['G']);
-            $sim_carrier     = trim($row['H']);
-            $notes         = trim($row['I']);
-
-            if (empty($serial) || empty($sim_number)) continue; // Skip if serial number is empty
-
-            // Check for duplicate serial number
-            if (Device::where('device_sn', $serial)->exists()) {
-                $duplicateSNs[] = $serial;
-                continue;
+        // Validate header row
+        foreach ($requiredColumns as $col => $name) {
+            if (empty($rows[1][$col])) {
+                throw new \Exception("Required column '{$name}' not found in column {$col} of the Excel sheet.");
             }
-             // Check for duplicate SIM number
-             if (Sim::where('sim_number', $sim_number)->exists()) {
-                $duplicateSIMs[] = $sim_number;
-                continue;
-            }
-            
-
-            // Find or create brand and location
-            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
-            $location = Location::firstOrCreate(['location_name' => $locationName]);
-
-            // Insert into device table
-            $device = new Device();
-            $device->device_model = $model;
-            $device->device_sn = $serial;
-            $device->device_acquisition_date = $acqDate;
-            $device->brand_id = $brand->brand_id;
-            $device->location_id = $location->location_id;
-            $device->emp_id = null;       // default
-            $device->status_id = 1;    // default
-            $device->pr_id = 1;        // default
-            $device->device_notes = $notes;       
-            $device->save();
-
-            // Insert into Sim table
-            $sim = new Sim();
-            $sim->device_id = $device->device_id;
-            $sim->sim_number = $sim_number;
-            $sim->sim_type = $sim_type;
-            $sim->sim_carrier = $sim_carrier;
-            $sim->save();
         }
 
+        foreach ($rows as $rowIndex => $row) {
+            if ($rowIndex === 1) continue; // Skip header row
+
+            try {
+                $brandName = trim($row['A'] ?? '');
+                $model = trim($row['B'] ?? '');
+                $serial = trim($row['C'] ?? '');
+                $locationName = trim($row['D'] ?? '');
+                $acqDate = trim($row['E'] ?? '');
+                $sim_number = trim($row['F'] ?? '');
+                $sim_type = trim($row['G'] ?? '');
+                $sim_carrier = trim($row['H'] ?? '');
+                $notes = trim($row['I'] ?? '');
+
+                // Validate required fields
+                $validationErrors = [];
+                if (empty($brandName)) $validationErrors[] = "Brand name is required";
+                if (empty($model)) $validationErrors[] = "Model is required";
+                if (empty($serial)) $validationErrors[] = "Serial number is required";
+                if (empty($locationName)) $validationErrors[] = "Location is required";
+                if (empty($acqDate)) $validationErrors[] = "Acquisition date is required";
+                if (empty($sim_number)) $validationErrors[] = "SIM number is required";
+                if (empty($sim_type)) $validationErrors[] = "SIM type is required";
+                if (empty($sim_carrier)) $validationErrors[] = "SIM carrier is required";
+
+                if (!empty($validationErrors)) {
+                    throw new \Exception("Row {$rowIndex}: " . implode(", ", $validationErrors));
+                }
+
+                // Validate date format if provided
+                $date = \DateTime::createFromFormat('Y-m-d', $acqDate);
+                if (!$date || $date->format('Y-m-d') !== $acqDate) {
+                    throw new \Exception("Row {$rowIndex}: Invalid date format for Acquisition Date. Use YYYY-MM-DD format.");
+                }
+
+                // Check for duplicate serial number
+                if (Device::where('device_sn', $serial)->exists()) {
+                    $duplicates[] = "Row {$rowIndex}: Device Serial number '{$serial}' already exists";
+                    continue;
+                }
+
+                // Check for duplicate SIM number
+                if (Sim::where('sim_number', $sim_number)->exists()) {
+                    $duplicates[] = "Row {$rowIndex}: SIM number '{$sim_number}' already exists";
+                    continue;
+                }
+
+                // Find or create brand and location
+                try {
+                    $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find brand '{$brandName}': " . $e->getMessage());
+                }
+
+                try {
+                    $location = Location::firstOrCreate(['location_name' => $locationName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find location '{$locationName}': " . $e->getMessage());
+                }
+
+                // Insert into device table
+                $device = new Device();
+                $device->device_model = $model;
+                $device->device_sn = $serial;
+                $device->device_acquisition_date = $acqDate;
+                $device->brand_id = $brand->brand_id;
+                $device->location_id = $location->location_id;
+                $device->emp_id = null;
+                $device->status_id = 1;
+                $device->pr_id = 1;
+                $device->device_notes = $notes;
+                $device->save();
+
+                // Insert into Sim table
+                $sim = new Sim();
+                $sim->device_id = $device->device_id;
+                $sim->sim_number = $sim_number;
+                $sim->sim_type = $sim_type;
+                $sim->sim_carrier = $sim_carrier;
+                $sim->save();
+
+                $importedCount++;
+
+            } catch (\Exception $e) {
+                $errors[] = $e->getMessage();
+                continue;
+            }
+        }
+
+        // Log the bulk import activity
+        error_log("About to log import_bulk_sims action for admin ID: " . $adminId);
+        $logResult = $this->logger->log($adminId, 'import_bulk_sims');
+        error_log("Logging result: " . ($logResult ? 'success' : 'failed'));
+
         $response->getBody()->write(json_encode([
-            'message' => 'Sims imported successfully',
-            'duplicates_skipped' => [
-                'device_sns' => $duplicateSNs,
-                'sim_numbers' => $duplicateSIMs
-            ]
+            'status' => 'completed',
+            'message' => 'Import process completed',
+            'imported_count' => $importedCount,
+            'duplicates' => $duplicates,
+            'errors' => $errors,
+            'log_result' => $logResult
         ]));
         return $response->withHeader('Content-Type', 'application/json');
 
     } catch (\Exception $e) {
         $response->getBody()->write(json_encode([
-            'error' => 'Import failed: ' . $e->getMessage()
+            'status' => 'failed',
+            'error' => $e->getMessage(),
+            'imported_count' => $importedCount ?? 0,
+            'duplicates' => $duplicates ?? [],
+            'errors' => $errors ?? []
         ]));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
@@ -998,6 +1230,10 @@ public function importSimsFromExcel(Request $request, Response $response): Respo
 
 public function importScreensFromExcel(Request $request, Response $response): Response
 {
+    // Get admin_id from JWT token
+    $decodedToken = $request->getAttribute('admin');
+    $adminId = $decodedToken->admin_id;
+
     $uploadedFiles = $request->getUploadedFiles();
     $file = $uploadedFiles['file'] ?? null;
 
@@ -1010,68 +1246,132 @@ public function importScreensFromExcel(Request $request, Response $response): Re
         $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
         $sheet = $spreadsheet->getSheetByName('screen');
         if (!$sheet) {
-            throw new \Exception('Sheet "screen" not found');
+            throw new \Exception('Sheet "screen" not found in the Excel file. Please make sure you have a sheet named "screen".');
         }
 
         $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
-        $duplicateSNs = [];
+        $duplicates = [];
+        $importedCount = 0;
+        $errors = [];
+        $requiredColumns = [
+            'A' => 'Brand',
+            'B' => 'Model',
+            'C' => 'Serial Number',
+            'D' => 'Location',
+            'E' => 'Acquisition Date',
+            'F' => 'Screen Resolution',
+            'G' => 'Screen Size'
+        ];
 
-        foreach ($rows as $i => $row) {
-            if ($i === 1) continue; // Skip header row
-
-            $brandName   = trim($row['A']);
-            $model       = trim($row['B']);
-            $serial      = trim($row['C']);
-            $locationName = trim($row['D']);
-            $acqDate     = trim($row['E']);
-            $screen_resolution     = trim($row['F']);
-            $screen_size     = trim($row['G']);
-            $notes         = trim($row['H']);
-
-            if (empty($serial)) continue; // Skip if serial number is empty
-
-            // Check for duplicate serial number
-            if (Device::where('device_sn', $serial)->exists()) {
-                $duplicateSNs[] = $serial;
-                continue;
+        // Validate header row
+        foreach ($requiredColumns as $col => $name) {
+            if (empty($rows[1][$col])) {
+                throw new \Exception("Required column '{$name}' not found in column {$col} of the Excel sheet.");
             }
-          
-            
+        }
 
-            // Find or create brand and location
-            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
-            $location = Location::firstOrCreate(['location_name' => $locationName]);
+        foreach ($rows as $rowIndex => $row) {
+            if ($rowIndex === 1) continue; // Skip header row
 
-            // Insert into device table
-            $device = new Device();
-            $device->device_model = $model;
-            $device->device_sn = $serial;
-            $device->device_acquisition_date = $acqDate;
-            $device->brand_id = $brand->brand_id;
-            $device->location_id = $location->location_id;
-            $device->emp_id = null;       // default
-            $device->status_id = 1;    // default
-            $device->pr_id = 1;        // default
-            $device->device_notes = $notes;       
-            $device->save();
+            try {
+                $brandName = trim($row['A'] ?? '');
+                $model = trim($row['B'] ?? '');
+                $serial = trim($row['C'] ?? '');
+                $locationName = trim($row['D'] ?? '');
+                $acqDate = trim($row['E'] ?? '');
+                $screen_resolution = trim($row['F'] ?? '');
+                $screen_size = trim($row['G'] ?? '');
+                $notes = trim($row['H'] ?? '');
 
-            // Insert into Sim table
+                // Validate required fields
+                $validationErrors = [];
+                if (empty($brandName)) $validationErrors[] = "Brand name is required";
+                if (empty($model)) $validationErrors[] = "Model is required";
+                if (empty($serial)) $validationErrors[] = "Serial number is required";
+                if (empty($locationName)) $validationErrors[] = "Location is required";
+                if (empty($acqDate)) $validationErrors[] = "Acquisition date is required";
+                if (empty($screen_resolution)) $validationErrors[] = "Screen resolution is required";
+                if (empty($screen_size)) $validationErrors[] = "Screen size is required";
+
+                if (!empty($validationErrors)) {
+                    throw new \Exception("Row {$rowIndex}: " . implode(", ", $validationErrors));
+                }
+
+                // Validate date format if provided
+                $date = \DateTime::createFromFormat('Y-m-d', $acqDate);
+                if (!$date || $date->format('Y-m-d') !== $acqDate) {
+                    throw new \Exception("Row {$rowIndex}: Invalid date format for Acquisition Date. Use YYYY-MM-DD format.");
+                }
+
+                // Check for duplicate serial number
+                if (Device::where('device_sn', $serial)->exists()) {
+                    $duplicates[] = "Row {$rowIndex}: Serial number '{$serial}' already exists";
+                    continue;
+                }
+
+                // Find or create brand and location
+                try {
+                    $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find brand '{$brandName}': " . $e->getMessage());
+                }
+
+                try {
+                    $location = Location::firstOrCreate(['location_name' => $locationName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find location '{$locationName}': " . $e->getMessage());
+                }
+
+                // Insert into device table
+                $device = new Device();
+                $device->device_model = $model;
+                $device->device_sn = $serial;
+                $device->device_acquisition_date = $acqDate;
+                $device->brand_id = $brand->brand_id;
+                $device->location_id = $location->location_id;
+                $device->emp_id = null;
+                $device->status_id = 1;
+                $device->pr_id = 1;
+                $device->device_notes = $notes;
+                $device->save();
+
+            // Insert into Screen table
             $screen = new Screen();
             $screen->device_id = $device->device_id;
             $screen->screen_resolution = $screen_resolution;
             $screen->screen_size = $screen_size;
             $screen->save();
+
+                $importedCount++;
+
+            } catch (\Exception $e) {
+                $errors[] = $e->getMessage();
+                continue;
+            }
         }
 
+        // Log the bulk import activity
+        error_log("About to log import_bulk_screens action for admin ID: " . $adminId);
+        $logResult = $this->logger->log($adminId, 'import_bulk_screens');
+        error_log("Logging result: " . ($logResult ? 'success' : 'failed'));
+
         $response->getBody()->write(json_encode([
-            'message' => 'Screens imported successfully',
-            'duplicates_skipped' => $duplicateSNs
+            'status' => 'completed',
+            'message' => 'Import process completed',
+            'imported_count' => $importedCount,
+            'duplicates' => $duplicates,
+            'errors' => $errors,
+            'log_result' => $logResult
         ]));
         return $response->withHeader('Content-Type', 'application/json');
 
     } catch (\Exception $e) {
         $response->getBody()->write(json_encode([
-            'error' => 'Import failed: ' . $e->getMessage()
+            'status' => 'failed',
+            'error' => $e->getMessage(),
+            'imported_count' => $importedCount ?? 0,
+            'duplicates' => $duplicates ?? [],
+            'errors' => $errors ?? []
         ]));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
@@ -1079,6 +1379,10 @@ public function importScreensFromExcel(Request $request, Response $response): Re
 
 public function importTabletsFromExcel(Request $request, Response $response): Response
 {
+    // Get admin_id from JWT token
+    $decodedToken = $request->getAttribute('admin');
+    $adminId = $decodedToken->admin_id;
+
     $uploadedFiles = $request->getUploadedFiles();
     $file = $uploadedFiles['file'] ?? null;
 
@@ -1091,67 +1395,198 @@ public function importTabletsFromExcel(Request $request, Response $response): Re
         $spreadsheet = IOFactory::load($file->getStream()->getMetadata('uri'));
         $sheet = $spreadsheet->getSheetByName('tablet');
         if (!$sheet) {
-            throw new \Exception('Sheet "tablet" not found');
+            throw new \Exception('Sheet "tablet" not found in the Excel file. Please make sure you have a sheet named "tablet".');
         }
 
         $rows = $sheet->toArray(null, true, true, true); // A, B, C... columns
         $duplicates = [];
+        $importedCount = 0;
+        $errors = [];
+        $requiredColumns = [
+            'A' => 'Brand',
+            'B' => 'Model',
+            'C' => 'Serial Number',
+            'D' => 'Location',
+            'E' => 'Acquisition Date'
+        ];
 
-        foreach ($rows as $i => $row) {
-            if ($i === 1) continue; // Skip header row
-
-            $brandName   = trim($row['A']);
-            $model       = trim($row['B']);
-            $serial      = trim($row['C']);
-            $locationName = trim($row['D']);
-            $acqDate     = trim($row['E']);
-            $notes         = trim($row['F']);
-
-            if (empty($serial)) continue; // Skip if serial number is empty
-
-            // Check for duplicate serial number
-            if (Device::where('device_sn', $serial)->exists()) {
-                $duplicates[] = $serial;
-                continue;
+        // Validate header row
+        foreach ($requiredColumns as $col => $name) {
+            if (empty($rows[1][$col])) {
+                throw new \Exception("Required column '{$name}' not found in column {$col} of the Excel sheet.");
             }
-
-            // Find or create brand and location
-            $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
-            $location = Location::firstOrCreate(['location_name' => $locationName]);
-
-            // Insert into device table
-            $device = new Device();
-            $device->device_model = $model;
-            $device->device_sn = $serial;
-            $device->device_acquisition_date = $acqDate;
-            $device->brand_id = $brand->brand_id;
-            $device->location_id = $location->location_id;
-            $device->emp_id = null;       // default
-            $device->status_id = 1;    // default
-            $device->pr_id = 1;        // default
-            $device->device_notes = $notes;       
-            $device->save();
-
-            // Insert into laptop table
-            $tablet = new Tablets();
-            $tablet->device_id = $device->device_id;
- 
-            $tablet->save();
         }
 
+        foreach ($rows as $rowIndex => $row) {
+            if ($rowIndex === 1) continue; // Skip header row
+
+            try {
+                $brandName = trim($row['A'] ?? '');
+                $model = trim($row['B'] ?? '');
+                $serial = trim($row['C'] ?? '');
+                $locationName = trim($row['D'] ?? '');
+                $acqDate = trim($row['E'] ?? '');
+                $notes = trim($row['F'] ?? '');
+
+                // Validate required fields
+                $validationErrors = [];
+                if (empty($brandName)) $validationErrors[] = "Brand name is required";
+                if (empty($model)) $validationErrors[] = "Model is required";
+                if (empty($serial)) $validationErrors[] = "Serial number is required";
+                if (empty($locationName)) $validationErrors[] = "Location is required";
+                if (empty($acqDate)) $validationErrors[] = "Acquisition date is required";
+
+                if (!empty($validationErrors)) {
+                    throw new \Exception("Row {$rowIndex}: " . implode(", ", $validationErrors));
+                }
+
+                // Validate date format if provided
+                $date = \DateTime::createFromFormat('Y-m-d', $acqDate);
+                if (!$date || $date->format('Y-m-d') !== $acqDate) {
+                    throw new \Exception("Row {$rowIndex}: Invalid date format for Acquisition Date. Use YYYY-MM-DD format.");
+                }
+
+                // Check for duplicate serial number
+                if (Device::where('device_sn', $serial)->exists()) {
+                    $duplicates[] = "Row {$rowIndex}: Serial number '{$serial}' already exists";
+                    continue;
+                }
+
+                // Find or create brand and location
+                try {
+                    $brand = Brand::firstOrCreate(['brand_name' => $brandName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find brand '{$brandName}': " . $e->getMessage());
+                }
+
+                try {
+                    $location = Location::firstOrCreate(['location_name' => $locationName]);
+                } catch (\Exception $e) {
+                    throw new \Exception("Row {$rowIndex}: Failed to create/find location '{$locationName}': " . $e->getMessage());
+                }
+
+                // Insert into device table
+                $device = new Device();
+                $device->device_model = $model;
+                $device->device_sn = $serial;
+                $device->device_acquisition_date = $acqDate;
+                $device->brand_id = $brand->brand_id;
+                $device->location_id = $location->location_id;
+                $device->emp_id = null;
+                $device->status_id = 1;
+                $device->pr_id = 1;
+                $device->device_notes = $notes;
+                $device->save();
+
+            // Insert into tablet table
+            $tablet = new Tablets();
+            $tablet->device_id = $device->device_id;
+            $tablet->save();
+
+                $importedCount++;
+
+            } catch (\Exception $e) {
+                $errors[] = $e->getMessage();
+                continue;
+            }
+        }
+
+        // Log the bulk import activity
+        error_log("About to log import_bulk_tablets action for admin ID: " . $adminId);
+        $logResult = $this->logger->log($adminId, 'import_bulk_tablets');
+        error_log("Logging result: " . ($logResult ? 'success' : 'failed'));
+
         $response->getBody()->write(json_encode([
-            'message' => 'Tablets imported successfully',
-            'duplicates_skipped' => $duplicates
+            'status' => 'completed',
+            'message' => 'Import process completed',
+            'imported_count' => $importedCount,
+            'duplicates' => $duplicates,
+            'errors' => $errors,
+            'log_result' => $logResult
         ]));
         return $response->withHeader('Content-Type', 'application/json');
 
     } catch (\Exception $e) {
         $response->getBody()->write(json_encode([
-            'error' => 'Import failed: ' . $e->getMessage()
+            'status' => 'failed',
+            'error' => $e->getMessage(),
+            'imported_count' => $importedCount ?? 0,
+            'duplicates' => $duplicates ?? [],
+            'errors' => $errors ?? []
         ]));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
 }
 
+public function getDeviceCounts(Request $request, Response $response): Response
+{
+    try {
+        // Get total counts by device type
+        $totalCounts = DB::table('device')
+            ->select(DB::raw('
+                SUM(CASE WHEN device_id IN (SELECT device_id FROM laptop) THEN 1 ELSE 0 END) as laptop_count,
+                SUM(CASE WHEN device_id IN (SELECT device_id FROM mobile) THEN 1 ELSE 0 END) as mobile_count,
+                SUM(CASE WHEN device_id IN (SELECT device_id FROM screen) THEN 1 ELSE 0 END) as screen_count,
+                SUM(CASE WHEN device_id IN (SELECT device_id FROM tablets) THEN 1 ELSE 0 END) as tablet_count,
+                SUM(CASE WHEN device_id IN (SELECT device_id FROM sim) THEN 1 ELSE 0 END) as sim_count
+            '))
+            ->first();
+
+        // Get counts by location and device type
+        $locationCounts = DB::table('location')
+            ->select([
+                'location.location_id',
+                'location.location_name',
+                DB::raw('COUNT(DISTINCT CASE WHEN device_id IN (SELECT device_id FROM laptop) THEN device.device_id END) as laptop_count'),
+                DB::raw('COUNT(DISTINCT CASE WHEN device_id IN (SELECT device_id FROM mobile) THEN device.device_id END) as mobile_count'),
+                DB::raw('COUNT(DISTINCT CASE WHEN device_id IN (SELECT device_id FROM screen) THEN device.device_id END) as screen_count'),
+                DB::raw('COUNT(DISTINCT CASE WHEN device_id IN (SELECT device_id FROM tablets) THEN device.device_id END) as tablet_count'),
+                DB::raw('COUNT(DISTINCT CASE WHEN device_id IN (SELECT device_id FROM sim) THEN device.device_id END) as sim_count'),
+                DB::raw('COUNT(DISTINCT device.device_id) as total_devices')
+            ])
+            ->leftJoin('device', 'location.location_id', '=', 'device.location_id')
+            ->groupBy('location.location_id', 'location.location_name')
+            ->get()
+            ->map(function ($location) {
+                return [
+                    'location_name' => $location->location_name,
+                    'device_counts' => [
+                        'laptop' => (int)$location->laptop_count,
+                        'mobile' => (int)$location->mobile_count,
+                        'screen' => (int)$location->screen_count,
+                        'tablet' => (int)$location->tablet_count,
+                        'sim' => (int)$location->sim_count
+                    ],
+                    'total_devices' => (int)$location->total_devices
+                ];
+            });
+
+        $response->getBody()->write(json_encode([
+            'status' => 'success',
+            'data' => [
+                'total_counts' => [
+                    'laptop' => (int)$totalCounts->laptop_count,
+                    'mobile' => (int)$totalCounts->mobile_count,
+                    'screen' => (int)$totalCounts->screen_count,
+                    'tablet' => (int)$totalCounts->tablet_count,
+                    'sim' => (int)$totalCounts->sim_count,
+                    'total' => (int)($totalCounts->laptop_count + $totalCounts->mobile_count + 
+                            $totalCounts->screen_count + $totalCounts->tablet_count + 
+                            $totalCounts->sim_count)
+                ],
+                'locations' => $locationCounts
+            ]
+        ]));
+        return $response->withHeader('Content-Type', 'application/json');
+
+    } catch (\Exception $e) {
+        $response->getBody()->write(json_encode([
+            'status' => 'error',
+            'message' => $e->getMessage()
+        ]));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+}
 
 }
+

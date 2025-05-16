@@ -9,10 +9,18 @@ use Api\Controllers\Exception;
 use Illuminate\Database\Capsule\Manager as DB;
 use Api\Models\Location;
 use Api\Models\Position;
+use Api\Services\ActivityLoggerService;
+
 
 class EmployeeController
 {
 
+    private ActivityLoggerService $logger;
+
+    public function __construct(ActivityLoggerService $logger)
+    {
+        $this->logger = $logger;
+    }
     // Add new employee
     public function addEmployee(Request $request, Response $response)
     {

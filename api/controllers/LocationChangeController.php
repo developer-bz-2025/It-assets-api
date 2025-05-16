@@ -14,9 +14,20 @@ use Api\Models\Notification;
 use Api\Models\NotificationRecipient;
 use Api\Models\Status;
 
+use Api\Services\ActivityLoggerService;
+
+
 
 class LocationChangeController
 {
+
+    private ActivityLoggerService $logger;
+
+
+    public function __construct(ActivityLoggerService $logger)
+    {
+        $this->logger = $logger;
+    }
 
     public function getMyPendingRequests(Request $request, Response $response)
     {
@@ -48,6 +59,38 @@ class LocationChangeController
                 ->where('requested_location_id', $myLocationId)
                 ->where('status', 'pending')
                 ->get();
+
+            // Process each request to include the device type
+            $requests = $requests->map(function ($request) {
+                $device = $request->device;
+                // Determine device type and fetch additional details
+                if ($device) {
+                    if ($device->laptop) {
+                        $device->device_type = 'laptop';
+                        $deviceDetails = $device->laptop;
+                    } elseif ($device->mobile) {
+                        $device->device_type = 'mobile';
+                        $deviceDetails = $device->mobile;
+                    } elseif ($device->sim) {
+                        $device->device_type = 'sim';
+                        $deviceDetails = $device->sim;
+                    } elseif ($device->tablet) {
+                        $device->device_type = 'tablet';
+                        $deviceDetails = $device->tablet;
+                    } elseif ($device->screen) {
+                        $device->device_type = 'screen';
+                        $deviceDetails = $device->screen;
+                    } else {
+                        $device->device_type = 'other';
+                        $deviceDetails = null;
+                    }
+
+                    // Attach additional device details
+                    $device->details = $deviceDetails;
+                }
+
+                return $request;
+            });
 
             // return $response->withJson([
             //     'status' => 'success',
@@ -127,6 +170,11 @@ class LocationChangeController
 
 
             DB::commit();
+
+
+            $this->logger->log($adminId, 'approve_location_change');
+
+
 
             $response->getBody()->write(json_encode(['status' => 'success', 'message' => 'Location change approved!']));
             return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
@@ -248,6 +296,8 @@ class LocationChangeController
 
 
             DB::commit();
+            $this->logger->log($adminId, 'reject_location_change');
+
 
             $response->getBody()->write(json_encode(['status' => 'success', 'message' => 'Location change rejected!']));
             return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
