@@ -19,13 +19,16 @@ return function (Container $container) {
     // Register LocationChangeController with its dependencies
     $container->set(LocationChangeController::class, function (Container $container) {
         return new LocationChangeController(
+            $container->get(ActivityLoggerService::class),
             $container->get(ActivityLoggerService::class)
+
         );
     });
 
     // Register DeviceManagementController with its dependencies
     $container->set(DeviceManagementController::class, function (Container $container) {
         return new DeviceManagementController(
+            $container->get(ActivityLoggerService::class),
             $container->get(ActivityLoggerService::class)
         );
     });

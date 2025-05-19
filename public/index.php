@@ -253,6 +253,10 @@ $app->get('/api/device-counts', function (Request $request, Response $response) 
     return $container->get(DeviceManagementController::class)->getDeviceCounts($request, $response);
 })->add($jwtMiddleware);
 
+$app->get('/api/statuses-counts', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceManagementController::class)->getDeviceStatusCountsByLocation($request, $response);
+})->add($jwtMiddleware);
+
 $app->get('/api/activity-logs', function (Request $request, Response $response) use ($container) {
     return $container->get(ActivityLogController::class)->getLatest($request, $response);
 })->add($jwtMiddleware);

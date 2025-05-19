@@ -22,11 +22,13 @@ class LocationChangeController
 {
 
     private ActivityLoggerService $logger;
+    private ActivityLoggerService $lifecycleService;
 
-
-    public function __construct(ActivityLoggerService $logger)
+    public function __construct(ActivityLoggerService $logger, ActivityLoggerService $lifecycleService)
     {
         $this->logger = $logger;
+        $this->lifecycleService = $lifecycleService;
+
     }
 
     public function getMyPendingRequests(Request $request, Response $response)
@@ -169,6 +171,21 @@ class LocationChangeController
 
 
 
+            // 7. Log in device_managment
+            $this->logger->logLifecycle([
+                'device_id' => $locationRequest->device_id,
+                'old_status_id' => $locationRequest->device->status_id,
+                'new_status_id' => $stockStatusId,
+                'old_location_id' => $locationRequest->device->location_id,
+                'new_location_id' => $locationRequest->requested_location_id,
+                'old_emp_id' => $locationRequest->device->emp_id,
+                'new_emp_id' => null,
+                'pr_id' => $locationRequest->device->pr_id,
+                'admin_id' => $adminId,
+                'notes' => 'Device location changed upon approval of request ID ' . $requestId
+            ]);
+
+
             DB::commit();
 
 
@@ -294,6 +311,20 @@ class LocationChangeController
             ]);
 
 
+
+             // 7. Log in device_managment
+             $this->logger->logLifecycle([
+                'device_id' => $locationRequest->device_id,
+                'old_status_id' => $locationRequest->device->status_id,
+                'new_status_id' => $locationRequest->device->status_id,
+                'old_location_id' => $locationRequest->device->location_id,
+                'new_location_id' => $locationRequest->requested_location_id,
+                'old_emp_id' => $locationRequest->device->emp_id,
+                'new_emp_id' => null,
+                'pr_id' => $locationRequest->device->pr_id,
+                'admin_id' => $adminId,
+                'notes' => 'Device location changed upon rejection of request ID ' . $requestId
+            ]);
 
             DB::commit();
             $this->logger->log($adminId, 'reject_location_change');

@@ -4,6 +4,7 @@ namespace Api\services;
 
 use Api\Models\Action;
 use Api\Models\ActivityLog;
+use Api\Models\DeviceManagment;
 
 class ActivityLoggerService
 {
@@ -62,4 +63,29 @@ class ActivityLoggerService
             return false;
         }
     }
+
+    public function logLifecycle(array $data): bool
+{
+    try {
+        $record = DeviceManagment::create([
+            'device_id' => $data['device_id'],
+            'dm_data' => date('Y-m-d H:i:s'),
+            'old_status_id' => $data['old_status_id'] ?? null,
+            'new_status_id' => $data['new_status_id'] ?? null,
+            'old_location_id' => $data['old_location_id'] ?? null,
+            'new_location_id' => $data['new_location_id'] ?? null,
+            'old_emp_id' => $data['old_emp_id'] ?? null,
+            'new_emp_id' => $data['new_emp_id'] ?? null,
+            'pr_id' => $data['pr_id'] ?? null,
+            'admin_id' => $data['admin_id'],
+            'notes' => $data['notes'] ?? null
+        ]);
+        return $record !== null; // or: return (bool) $record;
+
+    } catch (\Exception $e) {
+        error_log("Failed to log device lifecycle: " . $e->getMessage());
+        return false;
+    }
+}
+
 }
