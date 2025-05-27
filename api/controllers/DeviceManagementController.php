@@ -23,6 +23,7 @@ use Api\Models\locationChangeRequests;
 use Api\Models\Admin;
 use Api\Models\MaintenanceStatus;
 use Api\Models\Maintenance;
+use Api\Models\DeviceEditRequest;
 use Api\Services\ActivityLoggerService;
 
 class DeviceManagementController
@@ -403,17 +404,45 @@ class DeviceManagementController
                     return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
                 }
 
-                // Create approval request instead of updating location directly
+
+                $adminLocationIds = Location::where('admin_id', $adminId)->pluck('location_id')->toArray();
+
                 $locationRequest = LocationChangeRequests::create([
                     'device_id' => $deviceId,
                     'current_location_id' => $device->location_id,
                     'requested_location_id' => $data['location_id'],
                     'requested_by_admin_id' => $adminId,
-                    'status' => 'pending'
+                    'status' => in_array($data['location_id'], $adminLocationIds) ? 'approved' : 'pending',
+                    'approved_by_admin_id' => in_array($data['location_id'], $adminLocationIds) ? $adminId : null,
+                    'approval_date' => in_array($data['location_id'], $adminLocationIds) ? Carbon::now() : null,
                 ]);
+                if ($locationRequest->status === 'approved') {
+                    $stockStatusId = Status::where('status_name', 'stock')->value('status_id');
 
-                // Log the location change request
-                $this->logger->log($adminId, 'request_location_change');
+                    $device->update([
+                        'location_id' => $data['location_id'],
+                        'status_id' => $stockStatusId,
+                        'emp_id' => null,
+                    ]);
+
+                    // Lifecycle log entry
+                    $this->logger->logLifecycle([
+                        'device_id' => $deviceId,
+                        'old_status_id' => $oldStatusId,
+                        'new_status_id' => $stockStatusId,
+                        'old_location_id' => $oldLocationId,
+                        'new_location_id' => $data['location_id'],
+                        'old_emp_id' => $oldEmpId,
+                        'new_emp_id' => null,
+                        'pr_id' => $device->pr_id,
+                        'admin_id' => $adminId,
+                        'notes' => 'Location changed and auto-approved by same admin (multi-location access)'
+                    ]);
+                    $this->logger->log($adminId, 'auto_approve_location_change');
+                } else {
+                    $this->logger->log($adminId, 'request_location_change');
+                }
+
 
                 $status = Status::find($data['status_id']);
                 $shouldClearEmp = $status && strtolower($status->status_name) !== 'in_use';
@@ -470,6 +499,12 @@ class DeviceManagementController
 
             }
 
+
+            if ($oldEmpId !== $device->emp_id) {
+                $oldEmpName = optional(Employee::find($oldEmpId))->emp_name ?? 'None';
+                $newEmpName = optional(Employee::find($device->emp_id))->emp_name ?? 'None';
+                $changeNotes[] = "Assigned to employee changed from '{$oldEmpName}' to '{$newEmpName}'";
+            }
 
 
 
@@ -581,18 +616,21 @@ class DeviceManagementController
                 }
             }
 
-            $this->logger->logLifecycle([
-                'device_id' => $device->device_id,
-                'old_status_id' => $oldStatusId,
-                'new_status_id' => $device->status_id,
-                'old_location_id' => $oldLocationId,
-                'new_location_id' => $data['location_id'],
-                'old_emp_id' => $oldEmpId,
-                'new_emp_id' => $device->emp_id,
-                'pr_id' => $device->pr_id,
-                'admin_id' => $adminId,
-                'notes' => !empty($changeNotes) ? implode('; ', $changeNotes) : null
-            ]);
+            // Only log if location wasn't already auto-approved
+            if (!($isLocationChange && in_array($data['location_id'], $adminLocationIds))) {
+                $this->logger->logLifecycle([
+                    'device_id' => $device->device_id,
+                    'old_status_id' => $oldStatusId,
+                    'new_status_id' => $device->status_id,
+                    'old_location_id' => $oldLocationId,
+                    'new_location_id' => $data['location_id'],
+                    'old_emp_id' => $oldEmpId,
+                    'new_emp_id' => $device->emp_id,
+                    'pr_id' => $device->pr_id,
+                    'admin_id' => $adminId,
+                    'notes' => !empty($changeNotes) ? implode('; ', $changeNotes) : null
+                ]);
+            }
 
             DB::commit();
 
@@ -696,9 +734,13 @@ class DeviceManagementController
     {
         $deviceType = $args['type'];
 
+        $admin = $request->getAttribute('admin');
+        $adminId = $admin->admin_id;
+
         $brands = Brand::all();
         $employees = Employee::where('emp_id', '!=', 0)->get();
         $locations = Location::all();
+        $adminLocations = Location::where('admin_id', $adminId)->get();
         // $prs = Pr::all();
         $prs = Pr::join('device_procurement', 'pr.pr_id', '=', 'device_procurement.pr_id')
             ->when($deviceType, function ($query, $deviceType) {
@@ -711,6 +753,7 @@ class DeviceManagementController
             'brands' => $brands,
             'employees' => $employees,
             'locations' => $locations,
+            'adminLocations' => $adminLocations,
             'prs' => $prs,
             'statuses' => $statuses,
         ];
@@ -748,7 +791,9 @@ class DeviceManagementController
             return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
         }
 
-        $myLocationId = $admin->employee->emp_locationId;
+        // $myLocationId = $admin->employee->emp_locationId;
+        $myLocationIds = Location::where('admin_id', $adminId)->pluck('location_id')->toArray();
+
 
         // Get pending requests for this location
         $locationEditCount = LocationChangeRequests::with([
@@ -757,15 +802,17 @@ class DeviceManagementController
             'requested_location',
             'requested_by.employee'
         ])
-            ->where('requested_location_id', $myLocationId)
+            ->whereIn('requested_location_id', $myLocationIds)
             ->where('status', 'pending')
             ->count();
 
         $prEditCount = DB::table('pr_edit_requests')->where('status', 'pending')->count();
+        $deviceEditCount = DB::table('device_edit_requests')->where('status', 'pending')->count();
 
         $response->getBody()->write(json_encode([
             'prEditCount' => $prEditCount,
-            'locationEditCount' => $locationEditCount
+            'locationEditCount' => $locationEditCount,
+            'deviceEditCount' => $deviceEditCount
         ]));
         return $response->withHeader('Content-Type', 'application/json');
     }
@@ -831,8 +878,14 @@ class DeviceManagementController
             ->whereIn('status', ['pending'])
             ->first();
 
+
         $device->has_pending_location_request = $pendingRequest ? true : false;
         $device->pending_location_request_id = $pendingRequest->request_id ?? null;
+
+        $hasEditRequest = DeviceEditRequest::where('device_id', $deviceId)
+            ->where('status', 'pending')
+            ->exists();
+        $device->has_pending_edit_request = $hasEditRequest;
 
         $response->getBody()->write(json_encode($device));
         return $response->withHeader('Content-Type', 'application/json');
@@ -1007,7 +1060,7 @@ class DeviceManagementController
                         'admin_id' => $adminId,
                         'notes' => 'Device Laptop imported via bulk upload'
                     ]);
-                    
+
 
                 } catch (\Exception $e) {
                     $errors[] = $e->getMessage();
@@ -1814,6 +1867,8 @@ class DeviceManagementController
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }
     }
+
+
 
 
 }

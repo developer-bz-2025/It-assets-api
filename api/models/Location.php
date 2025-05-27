@@ -10,6 +10,11 @@ class Location extends Model {
     public $timestamps = false;
 
     protected $fillable = [
-        'location_name','country_id'
+        'location_name','country_id','admin_id'
     ];
+
+    public function admin()
+    {
+        return $this->belongsTo(Admin::class, 'admin_id');
+    }
 }

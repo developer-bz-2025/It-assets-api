@@ -13,6 +13,7 @@ use Api\Controllers\AuthController;
 use Api\Controllers\LocationChangeController;
 use Api\Controllers\NotificationController;
 use Api\Controllers\ActivityLogController;
+use Api\Controllers\DeviceEditRequestController;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -195,6 +196,22 @@ $app->post('/api/import-tablet-devices', function (Request $request, Response $r
     return $container->get(DeviceManagementController::class)->importTabletsFromExcel($request, $response);
 })->add($jwtMiddleware);
 
+$app->post('/api/device-edit-request', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceEditRequestController::class)->createDeviceEditRequest($request, $response);
+})->add($jwtMiddleware);
+
+$app->get('/api/device-edit-requests/pending', function (Request $request, Response $response) use ($container) {
+    return $container->get(DeviceEditRequestController::class)->getPendingDeviceEditRequests($request, $response);
+})->add($jwtMiddleware);
+
+$app->post('/api/device-edit-requests/{request_id}/approve', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceEditRequestController::class)->approve($request, $response,$args);
+})->add($jwtMiddleware);
+
+$app->post('/api/device-edit-requests/{request_id}/reject', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(DeviceEditRequestController::class)->reject($request, $response,$args);
+})->add($jwtMiddleware);
+
 
 $app->get('/api/admin/info', function (Request $request, Response $response) use ($container) {
     return $container->get(AuthController::class)->adminInfo($request, $response);
@@ -259,6 +276,10 @@ $app->get('/api/statuses-counts', function (Request $request, Response $response
 
 $app->get('/api/activity-logs', function (Request $request, Response $response) use ($container) {
     return $container->get(ActivityLogController::class)->getLatest($request, $response);
+})->add($jwtMiddleware);
+
+$app->get('/api/device-lifecycle/{deviceId}', function (Request $request, Response $response, array $args) use ($container) {
+    return $container->get(ActivityLogController::class)->getLifecycle($request, $response,  $args);
 })->add($jwtMiddleware);
 
 $app->get('/', function ($request, $response, $args) {

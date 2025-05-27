@@ -8,7 +8,7 @@ use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Api\Models\locationChangeRequests;
 use Carbon\Carbon;
-use Api\Models\Admin;
+use Api\Models\Location;
 use Api\Models\Device;
 use Api\Models\Notification;
 use Api\Models\NotificationRecipient;
@@ -38,18 +38,21 @@ class LocationChangeController
             $decodedToken = $request->getAttribute('admin');
             $adminId = $decodedToken->admin_id;
 
+            // Get all locations this admin manages
+            $myLocationIds = Location::where('admin_id', $adminId)->pluck('location_id')->toArray();
+
 
             // Get admin's location through relationships
-            $admin = Admin::with(['employee.location'])
-                ->findOrFail($adminId);
+            // $admin = Admin::with(['employee.location'])
+            //     ->findOrFail($adminId);
 
-            if (!$admin->employee || !$admin->employee->emp_locationId) {
+            // if (!$admin->employee || !$admin->employee->emp_locationId) {
 
-                $response->getBody()->write(json_encode(['error' => 'Admin location not found']));
-                return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
-            }
+            //     $response->getBody()->write(json_encode(['error' => 'Admin location not found']));
+            //     return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+            // }
 
-            $myLocationId = $admin->employee->emp_locationId;
+            // $myLocationId = $admin->employee->emp_locationId;
 
             // Get pending requests for this location
             $requests = LocationChangeRequests::with([
@@ -58,7 +61,7 @@ class LocationChangeController
                 'requested_location',
                 'requested_by.employee'
             ])
-                ->where('requested_location_id', $myLocationId)
+                ->whereIn('requested_location_id', $myLocationIds)
                 ->where('status', 'pending')
                 ->get();
 
@@ -312,8 +315,8 @@ class LocationChangeController
 
 
 
-             // 7. Log in device_managment
-             $this->logger->logLifecycle([
+            // 7. Log in device_managment
+            $this->logger->logLifecycle([
                 'device_id' => $locationRequest->device_id,
                 'old_status_id' => $locationRequest->device->status_id,
                 'new_status_id' => $locationRequest->device->status_id,

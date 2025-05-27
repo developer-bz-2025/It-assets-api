@@ -6,6 +6,7 @@ use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Firebase\JWT\JWT;
 use Api\Models\Admin;
+use Api\Models\Location;
 use Api\Models\SuperAdmin;
 use Api\Models\ProcurementAdmin;
 use Api\Services\ActivityLoggerService;
@@ -42,7 +43,7 @@ class AuthController
         if (!$admin) {
             // Log failed login attempt - invalid username
             $this->logger->log(0, 'login_failed');
-            
+
             $response->getBody()->write(json_encode(['error' => "user name is not correct!"]));
             return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
         }
@@ -51,7 +52,7 @@ class AuthController
         if (!password_verify($password, $admin->admin_password)) {
             // Log failed login attempt - invalid password
             $this->logger->log($admin->admin_id, 'login_failed');
-            
+
             $response->getBody()->write(json_encode(['error' => "Invalid password"]));
             return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
         }
@@ -148,26 +149,41 @@ class AuthController
             $decodedToken = $request->getAttribute('admin');
             $adminId = $decodedToken->admin_id;
 
-            // Fetch admin with related employee and location info
-            $admin = Admin::with(['employee.location'])
-                ->findOrFail($adminId);
+            $admin = Admin::findOrFail($adminId);
+
+
+            // Fetch all locations assigned to this admin
+            $locations = Location::where('admin_id', $adminId)->get(['location_id', 'location_name']);
+
 
             // Format response data
+            // $responseData = [
+            //     'admin_id' => $admin->admin_id,
+            //     'username' => $admin->admin_username,
+            //     'employee' => [
+            //         'emp_id' => $admin->employee->emp_id,
+            //         'name' => $admin->employee->emp_name,
+            //         'email' => $admin->employee->emp_email,
+            //         'location' => [
+            //             'location_id' => $admin->employee->location->location_id,
+            //             'name' => $admin->employee->location->location_name
+            //         ]
+            //     ]
+            // ];
+
+            // $response->getBody()->write(json_encode(['status' => 'success', 'data' => $responseData]));
+            // return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+            // Format response
             $responseData = [
                 'admin_id' => $admin->admin_id,
                 'username' => $admin->admin_username,
-                'employee' => [
-                    'emp_id' => $admin->employee->emp_id,
-                    'name' => $admin->employee->emp_name,
-                    'email' => $admin->employee->emp_email,
-                    'location' => [
-                        'location_id' => $admin->employee->location->location_id,
-                        'name' => $admin->employee->location->location_name
-                    ]
-                ]
+                'locations' => $locations
             ];
 
-            $response->getBody()->write(json_encode(['status' => 'success', 'data' => $responseData]));
+            $response->getBody()->write(json_encode([
+                'status' => 'success',
+                'data' => $responseData
+            ]));
             return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
             $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Failed to fetch admin info', 'error' => $e->getMessage()]));
